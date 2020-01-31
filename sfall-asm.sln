@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.29613.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "sfall-asm", "sfall-asm.csproj", "{CC004C44-AB80-4504-A7D6-03B5C4EC655A}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{CC004C44-AB80-4504-A7D6-03B5C4EC655A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CC004C44-AB80-4504-A7D6-03B5C4EC655A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CC004C44-AB80-4504-A7D6-03B5C4EC655A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CC004C44-AB80-4504-A7D6-03B5C4EC655A}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {A5450E47-38F1-4B35-9AF8-058305956024}
+	EndGlobalSection
+EndGlobal

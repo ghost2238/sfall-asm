@@ -55,6 +55,7 @@ namespace sfall_asm
             if (args.Length == 0)
             {
                 Console.WriteLine(System.AppDomain.CurrentDomain.FriendlyName + " [asm_patch]");
+                Console.WriteLine("--memory      Write the code directly into fallout2.exe instead of generating a patch file.");
                 return;
             }
 
@@ -107,7 +108,7 @@ namespace sfall_asm
                     continue;
 
                 var spl = line.Split('|');
-                if (spl.Length != 3)
+                if (spl.Length < 3)
                     continue;
 
                 var offset = Convert.ToInt32(spl[0].Trim(), 16);
@@ -144,10 +145,8 @@ namespace sfall_asm
             if (memory)
             {
                 var ptr = OpenProcess(0x1F0FFF, IntPtr.Zero, new IntPtr(fallout2.Id));
-                //var hProc = new IntPtr(fallout2.Id);
                 foreach (var patch in memorybytes)
                 {
-                   // VirtualProtectEx(ptr, (IntPtr)patch.offset, (UIntPtr)1, 0x40, out uint _);
                     WriteProcessMemory(ptr, (IntPtr)patch.offset, patch.data, patch.data.Length, out IntPtr _);
                 }
             }
@@ -156,11 +155,6 @@ namespace sfall_asm
                 foreach (var l in output)
                     Console.WriteLine(l);
             }
-
-
-            // Console.ReadKey();
-            //var lines = ;
-            //foreach(var line in lines)
         }
     }
 }

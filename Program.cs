@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace sfall_asm
@@ -52,6 +53,10 @@ namespace sfall_asm
 
         static void Main(string[] args)
         {
+            // force english language, for exceptions
+            System.Threading.Thread.CurrentThread.CurrentCulture = System.Globalization.CultureInfo.CreateSpecificCulture("en-US");
+            System.Threading.Thread.CurrentThread.CurrentUICulture = System.Threading.Thread.CurrentThread.CurrentCulture;
+
             if (args.Length == 0)
             {
                 Console.WriteLine(System.AppDomain.CurrentDomain.FriendlyName + " [asm_patch]");
@@ -97,8 +102,10 @@ namespace sfall_asm
             }
 
             var memorybytes = new List<MemoryPatch>();
-            var output = new List<string>();
+            var outputCode = new List<string>();
+            var outputComm = new List<string>();
             var lastOffset = 0;
+
             foreach (var line in lines)
             {
                 if (line.Length >= 2 && line[0] == '/' && line[1] == '/')
@@ -110,6 +117,9 @@ namespace sfall_asm
                 var spl = line.Split('|');
                 if (spl.Length < 3)
                     continue;
+
+                // extract address, in case first column contains label
+                spl[0] = Regex.Match(spl[0], "[A-Fa-f0-9]+").Value;
 
                 var offset = Convert.ToInt32(spl[0].Trim(), 16);
                 if (offset == 0)
@@ -129,14 +139,37 @@ namespace sfall_asm
                     }
                     else
                     {
-                        var writeByte = $"write_byte(0x{offset.ToString("x")}, 0x{bytes[i]}{bytes[i + 1]})";
-                        if (i == 0)
-                            writeByte += "; /* " + spl[2].Trim() + " */ ";
+                        const bool pack = true; // use all available sfall functions to minimize macro length; TODO? --option
+                        string write = "";
+                        int writeSize = 0;
+
+                        if( pack && i + 8 <= bytes.Length )
+                        {
+                            write = $"write_int(  0x{offset.ToString("x")}, 0x{bytes[i+6]}{bytes[i+7]}{bytes[i+4]}{bytes[i+5]}{bytes[i+2]}{bytes[i+3]}{bytes[i]}{bytes[i+1]});";
+                            writeSize = 4;
+                        }
+                        else if( pack && i + 4 <= bytes.Length )
+                        {
+                            write = $"write_short(0x{offset.ToString("x")}, 0x{bytes[i+2]}{bytes[i+3]}{bytes[i]}{bytes[i+1]});";
+                            writeSize = 2;
+                        }
                         else
-                            writeByte += ";";
-                        writeByte += " \\";
-                        output.Add(writeByte);
+                        {
+                            write = $"write_byte( 0x{offset.ToString("x")}, 0x{bytes[i]}{bytes[i + 1]});";
+                            writeSize = 1;
+                        }
+
+                        // code and comment are stored separately, for shiny formatting
+                        outputCode.Add(write);
+                        if (i == 0)
+                            outputComm.Add("/* " + spl[2].Trim() + " */");
+                        else
+                            outputComm.Add("");
+
+                        i += writeSize * 2 - 2;
+                        offset += writeSize - 1;
                     }
+
                     offset++;
                     lastOffset = offset;
                 }
@@ -152,8 +185,14 @@ namespace sfall_asm
             }
             else
             {
-                foreach (var l in output)
-                    Console.WriteLine(l);
+                // find longest code and comment, for shiny formatting
+                int maxCode = outputCode.Max( str => str.Length );
+                int maxComm = outputComm.Max( str => str.Length );
+
+                for(int l=0, len=outputCode.Count; l<len; l++ )
+                {
+                    Console.WriteLine( $"{outputCode[l].PadRight(maxCode)} {outputComm[l].PadRight(maxComm)} \\");
+                }
             }
         }
     }

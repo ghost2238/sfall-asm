@@ -68,10 +68,11 @@ namespace sfall_asm
 
             public int MaxCodeLength { get; protected set; } = 0;
             public int MaxCommentLength { get; protected set; } = 0;
+            public bool rfall = false;
 
             public void Add(string code, string comment = "")
             {
-                Lines.Add( Tuple.Create( code, comment ));
+                Lines.Add(Tuple.Create(code, comment));
 
                 // keep length of longest code and comment, for shiny formatting
                 if(code.Length > MaxCodeLength)
@@ -99,13 +100,14 @@ namespace sfall_asm
                 Console.WriteLine("SSL GENERATION");
                 Console.WriteLine("\t--no-pack     Only write_byte() will be used");
                 Console.WriteLine("\t--no-lower    Hex values won't be lowercased");
+                Console.WriteLine("\t--rfall       Force using r_write_*() functions");
                 Console.WriteLine();
 
                 return;
             }
 
-            SSLCode ssl = new SSLCode();
             RunMode runMode = RunMode.Macro;
+            SSLCode ssl = new SSLCode();
             if(args.Length>1)
             {
                 foreach (var a in args)
@@ -122,6 +124,8 @@ namespace sfall_asm
                         ssl.Pack = false;
                     else if(a == "--no-lower")
                         ssl.Lower = false;
+                    else if(a == "--rfall")
+                        ssl.rfall = true;
                 }
             }
 
@@ -148,7 +152,7 @@ namespace sfall_asm
                 var pids = Process.GetProcessesByName("Fallout2");
                 if (pids.Length == 0)
                 {
-                    Console.WriteLine("Unable to find fallout2.exe");
+                    Console.WriteLine("Unable to find Fallout2.exe process");
                     return;
                 }
                 fallout2 = pids[0];
@@ -162,18 +166,20 @@ namespace sfall_asm
 
             foreach (var line in lines)
             {
+                // find additional patch configuration
                 Match matchMeta = reMeta.Match(line);
                 if(matchMeta.Success)
                 {
                     string var = matchMeta.Groups[1].Value.Trim().ToLower();
                     string val = matchMeta.Groups[2].Value.Trim();
 
-                    if( var == "name")
+                    if(var == "name")
                         ssl.Name = val;
 
                     continue;
                 }
 
+                // find public comments, included in generated macro/procedure code
                 Match matchInfo = reInfo.Match(line);
                 if(matchInfo.Success)
                 {
@@ -215,27 +221,31 @@ namespace sfall_asm
                     }
                     else
                     {
-                        string write = "", offsetString = "0x" + offset.ToString("x"), bytesString = "0x";
+                        string write = "write_", offsetString = offset.ToString("x"), bytesString = "";
                         int writeSize = 0;
 
-                        // pack
-                        if( ssl.Pack && i + 8 <= bytes.Length )
+                        if(ssl.Pack && i + 8 <= bytes.Length)
                         {
-                            write = "int";
-                            bytesString += $"{bytes[i + 6]}{bytes[i + 7]}{bytes[i + 4]}{bytes[i + 5]}{bytes[i + 2]}{bytes[i + 3]}{bytes[i]}{bytes[i + 1]}";
+                            write += "int  ";
                             writeSize = 4;
                         }
-                        else if( ssl.Pack && i + 4 <= bytes.Length )
+                        else if(ssl.Pack && i + 4 <= bytes.Length)
                         {
-                            write = "short";
-                            bytesString += $"{bytes[i + 2]}{bytes[i + 3]}{bytes[i]}{bytes[i + 1]}";
+                            write += "short";
                             writeSize = 2;
                         }
                         else
                         {
-                            write = "byte";
-                            bytesString += $"{bytes[i]}{bytes[i + 1]}";
+                            write += "byte";
                             writeSize = 1;
+
+                            if(ssl.Pack)
+                                write += " ";
+                        }
+
+                        for(int w=0, b=i; w<writeSize; w++)
+                        {
+                            bytesString = $"{bytes[b++]}{bytes[b++]}" + bytesString;
                         }
 
                         if(ssl.Lower)
@@ -249,11 +259,13 @@ namespace sfall_asm
                             bytesString = bytesString.ToUpper();
                         }
 
-                        // restore lowercased "x", even with --no-lower option
-                        offsetString = offsetString.Replace("X", "x");
-                        bytesString = bytesString.Replace("X", "x");
+                        ssl.Add($"{write}(0x{offsetString}, 0x{bytesString});", i == 0 ? spl[2].Trim() : "");
 
-                        ssl.Add( $"write_{write.PadRight((ssl.Pack ? 5 : 4))}({offsetString}, {bytesString});", i == 0 ? spl[2].Trim() : "");
+                        // vanilla sfall cannot write outside Fallout2.exe memory currently,
+                        // see sfall/Modules/Scripting/Handlers/Memory.cpp (START_VALID_ADDR, END_VALID_ADDR)
+                        // after preparing all lines, code is tweaked to use less restricted sfall-rotators implementation
+                        if(offset < 0x410000 || offset > 0x6B403F)
+                            ssl.rfall = true;
 
                         i += writeSize * 2 - 2;
                         offset += writeSize - 1;
@@ -285,23 +297,33 @@ namespace sfall_asm
                     prefix = new string(' ', 15);
                     suffix = "\\";
 
-                    Console.WriteLine( $"#define VOODOO_{(ssl.Name.Length > 0 ? ssl.Name : "")} \\");
+                    Console.WriteLine($"#define VOODOO_{(ssl.Name.Length > 0 ? ssl.Name : "")} \\");
                 }
                 else if(runMode == RunMode.Procedure)
                 {
-                    prefix = new string(' ', 3);
+                    prefix = new string(' ', 3); // default SfallEditor setting... yeah. i know.
 
                     Console.WriteLine($"inline procedure VOODOO_{(ssl.Name.Length > 0 ? ssl.Name : "")}");
                     Console.WriteLine("begin");
                 }
 
+                if(ssl.rfall)
+                    Console.WriteLine("// sfall-rotators required");
+
                 var lastLine = ssl.Lines[ssl.Lines.Count - 1];
+                int maxCodeLengthTweak = ssl.rfall ? 2 : 0; // for correct padding
                 foreach(var line in ssl.Lines)
                 {
-                    string middle = " ", code = line.Item1, comment = line.Item2;
+                    string middle = "", code = line.Item1, comment = line.Item2;
                     bool last = line == lastLine;
 
-                    // remove ; from last line of marco
+                    // add r_ prefix to ALL lines if at least one write uses sfall-rotators function or --rfall is used
+                    // in first case it's technically not needed to use r_write_* if other address(es) are inside sfall limits,
+                    // but mixing limited and non-limited writing can make macro/procedure useless and/or dangerous
+                    if(ssl.rfall)
+                        code = "r_" + code;
+
+                    // remove ; and \ from last line of marco
                     if(runMode == RunMode.Macro && last)
                     {
                         code = Regex.Match(code, "^.+\\)").Value;
@@ -315,7 +337,7 @@ namespace sfall_asm
                         {
                             if(!last)
                             {
-                                middle = "".PadLeft((ssl.MaxCodeLength - code.Length) + 1);
+                                middle = "".PadLeft((ssl.MaxCodeLength + maxCodeLengthTweak - code.Length) + 1);
                                 comment = "".PadLeft(ssl.MaxCommentLength + 7);
                             }
                             else
@@ -326,7 +348,7 @@ namespace sfall_asm
                     }
                     else
                     {
-                        middle = "".PadLeft((ssl.MaxCodeLength - code.Length) + 1);
+                        middle = "".PadLeft((ssl.MaxCodeLength + maxCodeLengthTweak - code.Length) + 1);
 
                         if(runMode == RunMode.Macro)
                         {
@@ -340,9 +362,9 @@ namespace sfall_asm
 
                     // debug
                     // const string eol = "\\n";
-                    // Console.WriteLine( $"[{prefix}][{code}][{middle}][{comment}][{suffix}]{eol}");
+                    // Console.WriteLine($"[{prefix}][{code}][{middle}][{comment}][{suffix}]{eol}");
 
-                    Console.WriteLine( $"{prefix}{code}{middle}{comment}{suffix}");
+                    Console.WriteLine($"{prefix}{code}{middle}{comment}{suffix}");
                 }
 
                 if(runMode == RunMode.Procedure)

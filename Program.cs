@@ -3,19 +3,13 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
 
 namespace sfall_asm
 {
     class Program
     {
-        const int PROCESS_VM_OPERATION = 0x08;
-        const int PROCESS_VM_READ = 0x10;
-        const int PROCESS_VM_WRITE = 0x20;
         [DllImport("kernel32", SetLastError = true)]
         public static extern IntPtr OpenProcess(
                     int dwDesiredAccess,
@@ -64,7 +58,7 @@ namespace sfall_asm
             public bool Pack = true;
             public bool Lower = true;
 
-            public List<Tuple<string, string>> Lines = new List<Tuple<string, string>>();
+            public List<(string, string)> Lines = new List<(string, string)>();
 
             public int MaxCodeLength { get; protected set; } = 0;
             public int MaxCommentLength { get; protected set; } = 0;
@@ -72,7 +66,7 @@ namespace sfall_asm
 
             public void Add(string code, string comment = "")
             {
-                Lines.Add(Tuple.Create(code, comment));
+                Lines.Add((code, comment));
 
                 // keep length of longest code and comment, for shiny formatting
                 if(code.Length > MaxCodeLength)
@@ -161,8 +155,8 @@ namespace sfall_asm
             var memorybytes = new List<MemoryPatch>();
             var lastOffset = 0;
 
-            Regex reMeta = new Regex(@"^//![\t ]+([A-Za-z0-9]+)[\t ]+(.+)$");
-            Regex reInfo = new Regex(@"^///[\t ]+(.+)$");
+            var reMeta = new Regex(@"^//![\t ]+([A-Za-z0-9]+)[\t ]+(.+)$");
+            var reInfo = new Regex(@"^///[\t ]+(.+)$");
 
             foreach (var line in lines)
             {
@@ -212,10 +206,10 @@ namespace sfall_asm
                 {
                     if (runMode == RunMode.Memory)
                     {
-                        var by = Convert.ToByte($"{bytes[i]}{bytes[i + 1]}", 16);
+                        var @byte = Convert.ToByte($"{bytes[i]}{bytes[i + 1]}", 16);
                         memorybytes.Add(new MemoryPatch()
                         {
-                            data = new byte[] { by },
+                            data = new byte[] { @byte },
                             offset = offset
                         });
                     }

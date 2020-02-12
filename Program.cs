@@ -13,7 +13,6 @@ namespace sfall_asm
 {
     class Program
     {
-
         const int PROCESS_VM_OPERATION = 0x08;
         const int PROCESS_VM_READ = 0x10;
         const int PROCESS_VM_WRITE = 0x20;
@@ -45,10 +44,41 @@ namespace sfall_asm
          static extern bool VirtualProtectEx(IntPtr hProcess, IntPtr lpAddress,
         UIntPtr dwSize, uint flNewProtect, out uint lpflOldProtect);
 
+        enum RunMode
+        {
+            Macro,
+            Procedure,
+            Memory
+        }
+
         class MemoryPatch
         {
             public byte[] data;
             public int offset;
+        }
+
+        class SSLCode
+        {
+            public string Name = "";
+            public List<string> Info = new List<string>();
+            public bool Pack = true;
+            public bool Lower = true;
+
+            public List<Tuple<string, string>> Lines = new List<Tuple<string, string>>();
+
+            public int MaxCodeLength { get; protected set; } = 0;
+            public int MaxCommentLength { get; protected set; } = 0;
+
+            public void Add(string code, string comment = "")
+            {
+                Lines.Add( Tuple.Create( code, comment ));
+
+                // keep length of longest code and comment, for shiny formatting
+                if(code.Length > MaxCodeLength)
+                    MaxCodeLength = code.Length;
+                if(comment.Length > MaxCommentLength)
+                    MaxCommentLength = comment.Length;
+            }
         }
 
         static void Main(string[] args)
@@ -59,17 +89,40 @@ namespace sfall_asm
 
             if (args.Length == 0)
             {
-                Console.WriteLine(System.AppDomain.CurrentDomain.FriendlyName + " [asm_patch]");
-                Console.WriteLine("--memory      Write the code directly into fallout2.exe instead of generating a patch file.");
+                Console.WriteLine(System.AppDomain.CurrentDomain.FriendlyName + " [asm_patch] <options...>");
+                Console.WriteLine();
+                Console.WriteLine("RUN MODE");
+                Console.WriteLine("\t--macro       Generate patch file as preprocessor macro (default)");
+                Console.WriteLine("\t--procedure   Generate patch file as inline procedure");
+                Console.WriteLine("\t--memory      Write the code directly into Fallout2.exe");
+                Console.WriteLine();
+                Console.WriteLine("SSL GENERATION");
+                Console.WriteLine("\t--no-pack     Only write_byte() will be used");
+                Console.WriteLine("\t--no-lower    Hex values won't be lowercased");
+                Console.WriteLine();
+
                 return;
             }
 
-            bool memory = false;
+            SSLCode ssl = new SSLCode();
+            RunMode runMode = RunMode.Macro;
             if(args.Length>1)
             {
                 foreach (var a in args)
-                    if (a == "--memory")
-                        memory = true;
+                {
+                    // run mode
+                    if(a == "--macro")
+                        runMode = RunMode.Macro;
+                    else if(a== "--procedure")
+                        runMode = RunMode.Procedure;
+                    else if (a == "--memory")
+                        runMode = RunMode.Memory;
+                    // ssl generation
+                    else if(a == "--no-pack")
+                        ssl.Pack = false;
+                    else if(a == "--no-lower")
+                        ssl.Lower = false;
+                }
             }
 
             if (!File.Exists(args[0]))
@@ -90,7 +143,7 @@ namespace sfall_asm
 
 
             Process fallout2=null;
-            if(memory)
+            if(runMode == RunMode.Memory)
             {
                 var pids = Process.GetProcessesByName("Fallout2");
                 if (pids.Length == 0)
@@ -102,12 +155,33 @@ namespace sfall_asm
             }
 
             var memorybytes = new List<MemoryPatch>();
-            var outputCode = new List<string>();
-            var outputComm = new List<string>();
             var lastOffset = 0;
+
+            Regex reMeta = new Regex(@"^//![\t ]+([A-Za-z0-9]+)[\t ]+(.+)$");
+            Regex reInfo = new Regex(@"^///[\t ]+(.+)$");
 
             foreach (var line in lines)
             {
+                Match matchMeta = reMeta.Match(line);
+                if(matchMeta.Success)
+                {
+                    string var = matchMeta.Groups[1].Value.Trim().ToLower();
+                    string val = matchMeta.Groups[2].Value.Trim();
+
+                    if( var == "name")
+                        ssl.Name = val;
+
+                    continue;
+                }
+
+                Match matchInfo = reInfo.Match(line);
+                if(matchInfo.Success)
+                {
+                    ssl.Info.Add(matchInfo.Groups[1].Value.Trim());
+
+                    continue;
+                }
+
                 if (line.Length >= 2 && line[0] == '/' && line[1] == '/')
                     continue;
 
@@ -119,7 +193,9 @@ namespace sfall_asm
                     continue;
 
                 // extract address, in case first column contains label
-                spl[0] = Regex.Match(spl[0], "[A-Fa-f0-9]+").Value;
+                spl[0] = Regex.Match(spl[0], "^[\t ]*[A-Fa-f0-9]+").Value;
+                if(spl[0].Length == 0)
+                    continue;
 
                 var offset = Convert.ToInt32(spl[0].Trim(), 16);
                 if (offset == 0)
@@ -128,7 +204,7 @@ namespace sfall_asm
                 var bytes = spl[1].Replace(" ", "");
                 for (var i = 0; i < bytes.Length; i += 2)
                 {
-                    if (memory)
+                    if (runMode == RunMode.Memory)
                     {
                         var by = Convert.ToByte($"{bytes[i]}{bytes[i + 1]}", 16);
                         memorybytes.Add(new MemoryPatch()
@@ -139,32 +215,45 @@ namespace sfall_asm
                     }
                     else
                     {
-                        const bool pack = true; // use all available sfall functions to minimize macro length; TODO? --option
-                        string write = "";
+                        string write = "", offsetString = "0x" + offset.ToString("x"), bytesString = "0x";
                         int writeSize = 0;
 
-                        if( pack && i + 8 <= bytes.Length )
+                        // pack
+                        if( ssl.Pack && i + 8 <= bytes.Length )
                         {
-                            write = $"write_int(  0x{offset.ToString("x")}, 0x{bytes[i+6]}{bytes[i+7]}{bytes[i+4]}{bytes[i+5]}{bytes[i+2]}{bytes[i+3]}{bytes[i]}{bytes[i+1]});";
+                            write = "int";
+                            bytesString += $"{bytes[i + 6]}{bytes[i + 7]}{bytes[i + 4]}{bytes[i + 5]}{bytes[i + 2]}{bytes[i + 3]}{bytes[i]}{bytes[i + 1]}";
                             writeSize = 4;
                         }
-                        else if( pack && i + 4 <= bytes.Length )
+                        else if( ssl.Pack && i + 4 <= bytes.Length )
                         {
-                            write = $"write_short(0x{offset.ToString("x")}, 0x{bytes[i+2]}{bytes[i+3]}{bytes[i]}{bytes[i+1]});";
+                            write = "short";
+                            bytesString += $"{bytes[i + 2]}{bytes[i + 3]}{bytes[i]}{bytes[i + 1]}";
                             writeSize = 2;
                         }
                         else
                         {
-                            write = $"write_byte( 0x{offset.ToString("x")}, 0x{bytes[i]}{bytes[i + 1]});";
+                            write = "byte";
+                            bytesString += $"{bytes[i]}{bytes[i + 1]}";
                             writeSize = 1;
                         }
 
-                        // code and comment are stored separately, for shiny formatting
-                        outputCode.Add(write);
-                        if (i == 0)
-                            outputComm.Add("/* " + spl[2].Trim() + " */");
+                        if(ssl.Lower)
+                        {
+                            offsetString = offsetString.ToLower();
+                            bytesString = bytesString.ToLower();
+                        }
                         else
-                            outputComm.Add("");
+                        {
+                            offsetString = offsetString.ToUpper();
+                            bytesString = bytesString.ToUpper();
+                        }
+
+                        // restore lowercased "x", even with --no-lower option
+                        offsetString = offsetString.Replace("X", "x");
+                        bytesString = bytesString.Replace("X", "x");
+
+                        ssl.Add( $"write_{write.PadRight((ssl.Pack ? 5 : 4))}({offsetString}, {bytesString});", i == 0 ? spl[2].Trim() : "");
 
                         i += writeSize * 2 - 2;
                         offset += writeSize - 1;
@@ -175,7 +264,7 @@ namespace sfall_asm
                 }
             }
 
-            if (memory)
+            if (runMode == RunMode.Memory)
             {
                 var ptr = OpenProcess(0x1F0FFF, IntPtr.Zero, new IntPtr(fallout2.Id));
                 foreach (var patch in memorybytes)
@@ -185,14 +274,79 @@ namespace sfall_asm
             }
             else
             {
-                // find longest code and comment, for shiny formatting
-                int maxCode = outputCode.Max( str => str.Length );
-                int maxComm = outputComm.Max( str => str.Length );
-
-                for(int l=0, len=outputCode.Count; l<len; l++ )
+                foreach(string info in ssl.Info)
                 {
-                    Console.WriteLine( $"{outputCode[l].PadRight(maxCode)} {outputComm[l].PadRight(maxComm)} \\");
+                    Console.WriteLine($"// {info}");
                 }
+
+                string prefix = "", suffix = "";
+                if(runMode == RunMode.Macro)
+                {
+                    prefix = new string(' ', 15);
+                    suffix = "\\";
+
+                    Console.WriteLine( $"#define VOODOO_{(ssl.Name.Length > 0 ? ssl.Name : "")} \\");
+                }
+                else if(runMode == RunMode.Procedure)
+                {
+                    prefix = new string(' ', 3);
+
+                    Console.WriteLine($"inline procedure VOODOO_{(ssl.Name.Length > 0 ? ssl.Name : "")}");
+                    Console.WriteLine("begin");
+                }
+
+                var lastLine = ssl.Lines[ssl.Lines.Count - 1];
+                foreach(var line in ssl.Lines)
+                {
+                    string middle = " ", code = line.Item1, comment = line.Item2;
+                    bool last = line == lastLine;
+
+                    // remove ; from last line of marco
+                    if(runMode == RunMode.Macro && last)
+                    {
+                        code = Regex.Match(code, "^.+\\)").Value;
+                        suffix = "";
+                    }
+
+                    // align all comments to same position
+                    if(comment.Length == 0)
+                    {
+                        if(runMode == RunMode.Macro)
+                        {
+                            if(!last)
+                            {
+                                middle = "".PadLeft((ssl.MaxCodeLength - code.Length) + 1);
+                                comment = "".PadLeft(ssl.MaxCommentLength + 7);
+                            }
+                            else
+                                middle = "";
+                        }
+                        else if(runMode == RunMode.Procedure)
+                            middle = "";
+                    }
+                    else
+                    {
+                        middle = "".PadLeft((ssl.MaxCodeLength - code.Length) + 1);
+
+                        if(runMode == RunMode.Macro)
+                        {
+                            comment = "/* " + comment + " */";
+                            if(!last)
+                                comment = comment.PadRight(ssl.MaxCommentLength + 7);
+                        }
+                        else if(runMode == RunMode.Procedure)
+                            comment = "// " + comment;
+                    }
+
+                    // debug
+                    // const string eol = "\\n";
+                    // Console.WriteLine( $"[{prefix}][{code}][{middle}][{comment}][{suffix}]{eol}");
+
+                    Console.WriteLine( $"{prefix}{code}{middle}{comment}{suffix}");
+                }
+
+                if(runMode == RunMode.Procedure)
+                    Console.WriteLine("end");
             }
         }
     }

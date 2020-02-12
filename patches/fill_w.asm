@@ -1,4 +1,5 @@
-// Fill_W that works like in Fallout 1
+//! NAME fill_w
+/// Fill_W that works like in Fallout 1
 // https://github.com/rotators/Fo1in2/issues/16
 
 004C3735 | E9 F576F5FF  | jmp fallout2.41AE2F

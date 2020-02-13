@@ -53,26 +53,201 @@ namespace sfall_asm
 
         class SSLCode
         {
+            protected enum LineType
+            {
+                Write,
+                Comment
+            };
+
+            public readonly string NamePrefix;
             public string Name = "";
-            public List<string> Info = new List<string>();
             public bool Pack = true;
             public bool Lower = true;
-
-            public List<(string, string)> Lines = new List<(string, string)>();
+            public bool rfall = false;
 
             public int MaxCodeLength { get; protected set; } = 0;
             public int MaxCommentLength { get; protected set; } = 0;
-            public bool rfall = false;
 
-            public void Add(string code, string comment = "")
+            protected List<string> Info = new List<string>();
+            protected List<(LineType Type, string Code, string Comment)> Lines = new List<(LineType, string, string)>();
+
+            public SSLCode(string namePrefix = "")
             {
-                Lines.Add((code, comment));
+                NamePrefix = namePrefix;
+            }
+
+            public void AddInfo(string info)
+            {
+                Info.Add(info);
+            }
+
+            public void AddWrite(string code, string comment = "")
+            {
+                Lines.Add((LineType.Write, code, comment));
 
                 // keep length of longest code and comment, for shiny formatting
                 if(code.Length > MaxCodeLength)
                     MaxCodeLength = code.Length;
                 if(comment.Length > MaxCommentLength)
                     MaxCommentLength = comment.Length;
+            }
+
+            public void AddComment(string comment)
+            {
+                Lines.Add((LineType.Comment, "", comment));
+            }
+
+            public string GetName()
+            {
+                string result = "";
+
+                if(NamePrefix.Length > 0)
+                    result += NamePrefix + "_";
+
+                if(Name.Length > 0)
+                    result += Name;
+
+                return result;
+            }
+
+            public List<string> GetInfo()
+            {
+                List<string> result = new List<string>();
+
+                foreach(string info in Info)
+                {
+                    result.Add($"// {info}");
+                }
+
+                if(rfall)
+                    result.Add("// sfall-rotators required");
+
+                return result;
+            }
+
+            public List<string> GetBody(RunMode mode)
+            {
+                if(mode != RunMode.Macro && mode != RunMode.Procedure)
+                    throw new InvalidOperationException("You're kidding, right?");
+
+                List<string> result = new List<string>();
+
+                string prefix = "", suffix = "";
+                if(mode == RunMode.Macro)
+                {
+                    prefix = new string(' ', 8 + (NamePrefix.Length > 0 ? NamePrefix.Length + 1 : 0));
+                    suffix = "\\";
+
+                    result.Add($"#define {GetName()} \\");
+                }
+                else if(mode == RunMode.Procedure)
+                {
+                    prefix = new string(' ', 3); // default SFallEditor setting... yeah. i know.
+
+                    result.Add($"inline procedure {GetName()}");
+                    result.Add("begin");
+                }
+
+                // for correct padding
+                int maxCodeLength = MaxCodeLength;
+                if(rfall)
+                    maxCodeLength += 2;
+
+                var lastLine = Lines[Lines.Count - 1];
+                int lastWriteIdx = -1;
+
+                foreach(var line in Lines)
+                {
+                    string middle = "", code = line.Code, comment = line.Comment;
+                    bool last = line == lastLine;
+
+                    // align lines which contain comment only
+                    if(line.Type == LineType.Comment)
+                    {
+                        if(mode == RunMode.Macro)
+                        {
+                            if(!last)
+                                result.Add(prefix + ("/* " + comment + " */").PadRight(maxCodeLength + MaxCommentLength + 8) + suffix);
+                            else
+                            {
+                                result.Add(prefix + "/* " + comment + " */");
+                                result[lastWriteIdx] = result[lastWriteIdx].Replace(';', ' ');
+                            }
+                        }
+                        else if(mode == RunMode.Procedure)
+                            result.Add(prefix + "// " + comment);
+
+                        continue;
+                    }
+
+                    // add r_ prefix to ALL lines if at least one write uses sfall-rotators function or --rfall is used
+                    // in first case it's technically not needed to use r_write_* if other address(es) are inside sfall limits,
+                    // but mixing limited and non-limited writing can make macro/procedure useless and/or dangerous
+                    if(rfall)
+                        code = "r_" + code;
+
+                    // remove ; and \ from last line of marco
+                    if(mode == RunMode.Macro && last)
+                    {
+                        code = Regex.Match(code, "^.+\\)").Value;
+                        suffix = "";
+                    }
+
+                    // align all comments to same position
+                    if(comment.Length == 0)
+                    {
+                        if(mode == RunMode.Macro)
+                        {
+                            if(!last)
+                            {
+                                middle = "".PadLeft((maxCodeLength - code.Length) + 1);
+                                comment = "".PadLeft(MaxCommentLength + 7);
+                            }
+                            else
+                                middle = "";
+                        }
+                        else if(mode == RunMode.Procedure)
+                            middle = "";
+                    }
+                    else
+                    {
+                        middle = "".PadLeft((maxCodeLength - code.Length) + 1);
+
+                        if(mode == RunMode.Macro)
+                        {
+                            comment = "/* " + comment + " */";
+                            if(!last)
+                                comment = comment.PadRight(MaxCommentLength + 7);
+                        }
+                        else if(mode == RunMode.Procedure)
+                            comment = "// " + comment;
+                    }
+
+                    // debug
+                    // const string eol = "\\n";
+                    // result += $"[{prefix}][{code}][{middle}][{comment}][{suffix}]{eol}";
+
+                    result.Add($"{prefix}{code}{middle}{comment}{suffix}");
+
+                    // cache index of last line with write functions
+                    // used to remove ; when extra comments are present at bottom of macro body
+                    lastWriteIdx = result.Count - 1;
+                }
+
+                if(mode == RunMode.Procedure)
+                    result.Add("end");
+
+                return result;
+            }
+
+            public List<string> Get(RunMode mode)
+            {
+                List<string> result = new List<string>();
+
+                result.AddRange(GetInfo());
+                result.AddRange(GetBody(mode));
+
+                return result;
             }
         }
 
@@ -101,7 +276,7 @@ namespace sfall_asm
             }
 
             RunMode runMode = RunMode.Macro;
-            SSLCode ssl = new SSLCode();
+            SSLCode ssl = new SSLCode("VOODOO");
             if(args.Length>1)
             {
                 foreach (var a in args)
@@ -134,11 +309,11 @@ namespace sfall_asm
             {
                 lines.AddRange(File.ReadAllLines(args[0]));
             }
-            catch (Exception ex) { 
+            catch (Exception ex)
+            {
                 Console.WriteLine("Unable to open file: " + ex.Message);
                 Environment.Exit(1);
             };
-
 
             Process fallout2=null;
             if(runMode == RunMode.Memory)
@@ -157,6 +332,7 @@ namespace sfall_asm
 
             var reMeta = new Regex(@"^//![\t ]+([A-Za-z0-9]+)[\t ]+(.+)$");
             var reInfo = new Regex(@"^///[\t ]+(.+)$");
+            bool asmStart = false;
 
             foreach (var line in lines)
             {
@@ -164,10 +340,14 @@ namespace sfall_asm
                 Match matchMeta = reMeta.Match(line);
                 if(matchMeta.Success)
                 {
-                    string var = matchMeta.Groups[1].Value.Trim().ToLower();
+                    string var = matchMeta.Groups[1].Value.Trim().ToUpper();
                     string val = matchMeta.Groups[2].Value.Trim();
 
-                    if(var == "name")
+                    // changes "///" behavior to include comment inside macro/procedure body
+                    if(var == "ASM")
+                        asmStart = true;
+                    // sets macro/procedure name
+                    else if(var == "NAME")
                         ssl.Name = val;
 
                     continue;
@@ -177,7 +357,10 @@ namespace sfall_asm
                 Match matchInfo = reInfo.Match(line);
                 if(matchInfo.Success)
                 {
-                    ssl.Info.Add(matchInfo.Groups[1].Value.Trim());
+                    if(!asmStart)
+                        ssl.AddInfo(matchInfo.Groups[1].Value.Trim());
+                    else
+                        ssl.AddComment(matchInfo.Groups[1].Value.Trim());
 
                     continue;
                 }
@@ -196,6 +379,9 @@ namespace sfall_asm
                 spl[0] = Regex.Match(spl[0], "^[\t ]*[A-Fa-f0-9]+").Value;
                 if(spl[0].Length == 0)
                     continue;
+
+                // changes "///" behavior to include comment inside macro/procedure body
+                asmStart = true;
 
                 var offset = Convert.ToInt32(spl[0].Trim(), 16);
                 if (offset == 0)
@@ -253,7 +439,7 @@ namespace sfall_asm
                             bytesString = bytesString.ToUpper();
                         }
 
-                        ssl.Add($"{write}(0x{offsetString}, 0x{bytesString});", i == 0 ? spl[2].Trim() : "");
+                        ssl.AddWrite($"{write}(0x{offsetString}, 0x{bytesString});", i == 0 ? spl[2].Trim() : "");
 
                         // vanilla sfall cannot write outside Fallout2.exe memory currently,
                         // see sfall/Modules/Scripting/Handlers/Memory.cpp (START_VALID_ADDR, END_VALID_ADDR)
@@ -280,89 +466,10 @@ namespace sfall_asm
             }
             else
             {
-                foreach(string info in ssl.Info)
+                foreach(var line in ssl.Get(runMode))
                 {
-                    Console.WriteLine($"// {info}");
+                    Console.WriteLine(line);
                 }
-
-                string prefix = "", suffix = "";
-                if(runMode == RunMode.Macro)
-                {
-                    prefix = new string(' ', 15);
-                    suffix = "\\";
-
-                    Console.WriteLine($"#define VOODOO_{(ssl.Name.Length > 0 ? ssl.Name : "")} \\");
-                }
-                else if(runMode == RunMode.Procedure)
-                {
-                    prefix = new string(' ', 3); // default SfallEditor setting... yeah. i know.
-
-                    Console.WriteLine($"inline procedure VOODOO_{(ssl.Name.Length > 0 ? ssl.Name : "")}");
-                    Console.WriteLine("begin");
-                }
-
-                if(ssl.rfall)
-                    Console.WriteLine("// sfall-rotators required");
-
-                var lastLine = ssl.Lines[ssl.Lines.Count - 1];
-                int maxCodeLengthTweak = ssl.rfall ? 2 : 0; // for correct padding
-                foreach(var line in ssl.Lines)
-                {
-                    string middle = "", code = line.Item1, comment = line.Item2;
-                    bool last = line == lastLine;
-
-                    // add r_ prefix to ALL lines if at least one write uses sfall-rotators function or --rfall is used
-                    // in first case it's technically not needed to use r_write_* if other address(es) are inside sfall limits,
-                    // but mixing limited and non-limited writing can make macro/procedure useless and/or dangerous
-                    if(ssl.rfall)
-                        code = "r_" + code;
-
-                    // remove ; and \ from last line of marco
-                    if(runMode == RunMode.Macro && last)
-                    {
-                        code = Regex.Match(code, "^.+\\)").Value;
-                        suffix = "";
-                    }
-
-                    // align all comments to same position
-                    if(comment.Length == 0)
-                    {
-                        if(runMode == RunMode.Macro)
-                        {
-                            if(!last)
-                            {
-                                middle = "".PadLeft((ssl.MaxCodeLength + maxCodeLengthTweak - code.Length) + 1);
-                                comment = "".PadLeft(ssl.MaxCommentLength + 7);
-                            }
-                            else
-                                middle = "";
-                        }
-                        else if(runMode == RunMode.Procedure)
-                            middle = "";
-                    }
-                    else
-                    {
-                        middle = "".PadLeft((ssl.MaxCodeLength + maxCodeLengthTweak - code.Length) + 1);
-
-                        if(runMode == RunMode.Macro)
-                        {
-                            comment = "/* " + comment + " */";
-                            if(!last)
-                                comment = comment.PadRight(ssl.MaxCommentLength + 7);
-                        }
-                        else if(runMode == RunMode.Procedure)
-                            comment = "// " + comment;
-                    }
-
-                    // debug
-                    // const string eol = "\\n";
-                    // Console.WriteLine($"[{prefix}][{code}][{middle}][{comment}][{suffix}]{eol}");
-
-                    Console.WriteLine($"{prefix}{code}{middle}{comment}{suffix}");
-                }
-
-                if(runMode == RunMode.Procedure)
-                    Console.WriteLine("end");
             }
         }
     }

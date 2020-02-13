@@ -2,7 +2,12 @@
 /// Fill_W that works like in Fallout 1
 // https://github.com/rotators/Fo1in2/issues/16
 
+//! ASM !//
+
+/// wmMarkSubTileRadiusVisited_
 004C3735 | E9 F576F5FF  | jmp fallout2.41AE2F
+
+/// _defam ?
 0041AE2F | 75 4D        | jne fallout2.41AE7E
 00000000 | 83EC 04      | sub esp,4 
 00000000 | C60424 00    | mov ss:[esp+4],0 

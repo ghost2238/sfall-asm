@@ -53,23 +53,70 @@ namespace sfall_asm
 
         class SSLCode
         {
+            // NOTE: enum names starting with "write_" are used as-is in generated code
             protected enum LineType
             {
-                Write,
-                Comment
+                write_byte,
+                write_short,
+                write_int,
+                comment
+            };
+
+            protected class Line
+            {
+                public LineType Type;
+                public int Address;
+                public int Value;
+                public string Comment;
+
+                public bool RFall;
+                public bool HRP;
+
+                public string HexFormat;
+
+                public string FunctionString => (RFall ? "r_" : "") + Enum.GetName(typeof(LineType), Type).ToLower();
+                public string AddressString => (HRP ? "r_hrp_offset(" : "") + "0x" + Address.ToString(HexFormat) + (HRP ? ")" : "");
+                public string ValueString
+                {
+                    get
+                    {
+                        string result = "";
+
+                        if(Type == LineType.write_byte)
+                            result = ((byte)Value).ToString($"{HexFormat}2");
+                        else if(Type == LineType.write_short)
+                            result = ((short)Value).ToString($"{HexFormat}4");
+                        else if(Type == LineType.write_int)
+                            result = Value.ToString($"{HexFormat}8");
+
+                        if(result.Length > 0)
+                            result = $"0x{result}";
+
+                        return result;
+                    }
+                }
+
+                public Line(LineType type, int address, int value, string comment = "")
+                {
+                    Type = type;
+                    Address = address;
+                    Value = value;
+                    Comment = comment;
+
+                    RFall = HRP = false;
+                }
             };
 
             public readonly string NamePrefix;
             public string Name = "";
-            public bool Pack = true;
             public bool Lower = true;
-            public bool rfall = false;
-
-            public int MaxCodeLength { get; protected set; } = 0;
-            public int MaxCommentLength { get; protected set; } = 0;
+            public bool Pack = true;
+            public bool RFall = false;
 
             protected List<string> Info = new List<string>();
-            protected List<(LineType Type, string Code, string Comment)> Lines = new List<(LineType, string, string)>();
+            protected List<Line> Lines = new List<Line>();
+            protected Line LastLine;
+            protected Line LastWriteLine;
 
             public SSLCode(string namePrefix = "")
             {
@@ -81,20 +128,112 @@ namespace sfall_asm
                 Info.Add(info);
             }
 
-            public void AddWrite(string code, string comment = "")
+            public void AddWrite(int size, int address, int value, string comment = "")
             {
-                Lines.Add((LineType.Write, code, comment));
+                LineType type;
 
-                // keep length of longest code and comment, for shiny formatting
-                if(code.Length > MaxCodeLength)
-                    MaxCodeLength = code.Length;
-                if(comment.Length > MaxCommentLength)
-                    MaxCommentLength = comment.Length;
+                if(size == 4)
+                    type = LineType.write_int;
+                else if(size == 2)
+                    type = LineType.write_short;
+                else if(size == 1)
+                    type = LineType.write_byte;
+                else
+                    throw new ArgumentOutOfRangeException(nameof(size));
+
+                Lines.Add(new Line(type, address, value, comment));
+                LastWriteLine = LastLine = Lines.Last();
+
+                // vanilla sfall cannot write outside Fallout2.exe memory currently,
+                // after preparing all lines, code is tweaked to use less restricted rfall implementation
+                // see sfall/Modules/Scripting/Handlers/Memory.cpp -- START_VALID_ADDR, END_VALID_ADDR
+                if(address < 0x410000 || address > 0x6B403F)
+                    LastLine.RFall = true;
+
+                // f2_res.dll base address might change in some conditions
+                // make sure macro/procedure is writing at correct position by tweaking address same way as sfall does
+                // see sfall/main.cpp -- HRPAddress()
+                if(address >= 0x10000000 && address <= 0x10077000)
+                    LastLine.RFall = LastLine.HRP = true;
+
+                // add r_ prefix to ALL lines if at least one write uses rfall function or --rfall is used
+                // in first case it's technically not needed to use r_write_* if other address(es) are inside sfall limits,
+                // but mixing limited and non-limited writing can make macro/procedure useless and/or dangerous
+                if(!LastLine.RFall && this.RFall)
+                    LastLine.RFall = true;
+                else if(LastLine.RFall && !this.RFall)
+                {
+                    foreach(Line line in Lines)
+                    {
+                        line.RFall = true;
+                    }
+
+                    this.RFall = true;
+                }
             }
 
             public void AddComment(string comment)
             {
-                Lines.Add((LineType.Comment, "", comment));
+                Lines.Add(new Line(LineType.comment, 0, 0, comment));
+
+                LastLine = Lines.Last();
+            }
+
+            protected void PreProcessNOP()
+            {
+                bool isNOP8(int idx) => Lines[idx].Type == LineType.write_byte && Lines[idx].Value == 0x90 && Lines[idx].Comment == "nop";
+                bool isNOP16(int idx) => Lines[idx].Type == LineType.write_short && Lines[idx].Value == 0x9090  && Lines[idx].Comment == "nop";
+                bool isNOP32(int idx) => Lines[idx].Type == LineType.write_int && (uint)Lines[idx].Value == 0x90909090  && Lines[idx].Comment == "nop";
+
+                for(int l=0, len=Lines.Count; l<len; l++)
+                {
+                    // lower amount of lines generated for duplicated NOP instructions
+                    if(Pack)
+                    {
+                        // byte, byte, byte, byte -> int
+                        if(l + 4 <= len && isNOP8(l) && isNOP8(l+1) && isNOP8(l+2) && isNOP8(l+3))
+                        {
+                            Lines[l].Type = LineType.write_int;
+                            Lines[l].Value = unchecked((int)0x90909090);
+
+                            Lines.RemoveAt(l+1);
+                            Lines.RemoveAt(l+1);
+                            Lines.RemoveAt(l+1);
+
+                            len -= 3;
+                        }
+                        // short, short -> int
+                        else if(l + 2 <= len && isNOP16(l) && isNOP16(l+1))
+                        {
+                            Lines[l].Type = LineType.write_int;
+                            Lines[l].Value = unchecked((int)0x90909090);
+
+                            Lines.RemoveAt(l+1);
+
+                            len--;
+                        }
+                        // byte, byte -> short
+                        else if(l + 2 <= len && isNOP8(l) && isNOP8(l+1))
+                        {
+                            Lines[l].Type = LineType.write_short;
+                            Lines[l].Value = 0x9090;
+
+                            Lines.RemoveAt(l+1);
+
+                            len--;
+                        }
+                    }
+
+                    if(isNOP32(l))
+                        Lines[l].Comment = "nop; nop; nop; nop";
+                    else if(isNOP16(l))
+                        Lines[l].Comment = "nop; nop";
+                }
+            }
+
+            public void PreProcess()
+            {
+                PreProcessNOP();
             }
 
             public string GetName()
@@ -119,8 +258,24 @@ namespace sfall_asm
                     result.Add($"// {info}");
                 }
 
-                if(rfall)
-                    result.Add("// sfall-rotators required");
+                bool hrp = false, rfall = false;
+                foreach(var line in Lines)
+                {
+                    if(!hrp && line.HRP)
+                    {
+                        hrp = true;
+                        result.Add("// hrp required");
+                    }
+
+                    if(!rfall && line.RFall)
+                    {
+                        rfall = true;
+                        result.Add("// rfall required");
+                    }
+
+                    if(rfall && hrp)
+                        break;
+                }
 
                 return result;
             }
@@ -131,12 +286,12 @@ namespace sfall_asm
                     throw new InvalidOperationException("You're kidding, right?");
 
                 List<string> result = new List<string>();
+                string resultmp;
 
-                string prefix = "", suffix = "";
+                string prefix = "";
                 if(mode == RunMode.Macro)
                 {
                     prefix = new string(' ', 8 + (NamePrefix.Length > 0 ? NamePrefix.Length + 1 : 0));
-                    suffix = "\\";
 
                     result.Add($"#define {GetName()} \\");
                 }
@@ -148,90 +303,67 @@ namespace sfall_asm
                     result.Add("begin");
                 }
 
-                // for correct padding
-                int maxCodeLength = MaxCodeLength;
-                if(rfall)
-                    maxCodeLength += 2;
+                // collect maximum length of each subelement
+                int maxFunctionLength = 0, maxAddressLength = 0, maxValueLength = 0, maxCommentLength = 0;
+                int maxRawWriteMacroLength, maxRawWriteProcedureLength = 0, maxRawCommentLength = 0;
+                int maxRawLength = 0;
 
-                var lastLine = Lines[Lines.Count - 1];
-                int lastWriteIdx = -1;
+                foreach(Line line in Lines)
+                {
+                    if(line.Type == LineType.write_byte || line.Type == LineType.write_short || line.Type == LineType.write_int)
+                    {
+                        line.HexFormat = Lower ? "x" : "X";
+
+                        maxFunctionLength = Math.Max(maxFunctionLength, line.FunctionString.Length);
+                        maxAddressLength = Math.Max(maxAddressLength, line.AddressString.Length);
+                        maxValueLength = Math.Max(maxValueLength,line.ValueString.Length);
+                        maxCommentLength = Math.Max(maxCommentLength, line.Comment.Length);
+                    }
+                    else if(line.Type == LineType.comment)
+                    {
+                        maxRawCommentLength = Math.Max(maxRawCommentLength, line.Comment.Length);
+                    }
+                }
+                //                       write               (   0x1207             ,   _   0x1337           )   ;   _   /   *   _   text               _   *   /
+                maxRawWriteMacroLength = maxFunctionLength + 1 + maxAddressLength + 1 + 1 + maxValueLength + 1 + 1 + 1 + 1 + 1 + 1 + maxCommentLength + 1 + 1 + 1;
+                //                           write               (   0x1207             ,   _   0x1337           )   ;   _   /   /   _   text
+                maxRawWriteProcedureLength = maxFunctionLength + 1 + maxAddressLength + 1 + 1 + maxValueLength + 1 + 1 + 1 + 1 + 1 + 1 + maxCommentLength;
+                //                    /   *   _   text                 _   *   /
+                maxRawCommentLength = 1 + 1 + 1 + maxRawCommentLength+ 1 + 1 + 1;
+
+                if(mode == RunMode.Macro)
+                    maxRawLength = Math.Max(maxRawWriteMacroLength, maxRawCommentLength);
+                else if(mode == RunMode.Procedure)
+                    maxRawLength = Math.Max(maxRawWriteProcedureLength, maxRawCommentLength);
 
                 foreach(var line in Lines)
                 {
-                    string middle = "", code = line.Code, comment = line.Comment;
-                    bool last = line == lastLine;
+                    resultmp = prefix;
 
-                    // align lines which contain comment only
-                    if(line.Type == LineType.Comment)
+                    string comment(string value) => (mode == RunMode.Macro ? $"/* {value} */" : $"// {value}");
+
+                    if(line.Type == LineType.write_byte || line.Type == LineType.write_short || line.Type == LineType.write_int)
                     {
-                        if(mode == RunMode.Macro)
-                        {
-                            if(!last)
-                                result.Add(prefix + ("/* " + comment + " */").PadRight(maxCodeLength + MaxCommentLength + 8) + suffix);
-                            else
-                            {
-                                result.Add(prefix + "/* " + comment + " */");
-                                result[lastWriteIdx] = result[lastWriteIdx].Replace(';', ' ');
-                            }
-                        }
-                        else if(mode == RunMode.Procedure)
-                            result.Add(prefix + "// " + comment);
+                        resultmp += line.FunctionString.PadRight(maxFunctionLength);
+                        resultmp += $"({line.AddressString}, ".PadRight(maxAddressLength + 3);
+                        resultmp += $"{line.ValueString}){(mode == RunMode.Macro && line == LastWriteLine ? " " : ";")} ".PadRight(maxValueLength + 3);
 
-                        continue;
+                        if(line.Comment.Length > 0)
+                            resultmp += comment(line.Comment);
+                    }
+                    else if(line.Type == LineType.comment)
+                        resultmp += comment(line.Comment);
+
+                    if(mode == RunMode.Macro)
+                    {
+                        // make sure all line types are same length before adding suffix
+                        resultmp = resultmp.PadRight(maxRawLength + prefix.Length);
+
+                        if(line != LastLine)
+                            resultmp += " \\";
                     }
 
-                    // add r_ prefix to ALL lines if at least one write uses sfall-rotators function or --rfall is used
-                    // in first case it's technically not needed to use r_write_* if other address(es) are inside sfall limits,
-                    // but mixing limited and non-limited writing can make macro/procedure useless and/or dangerous
-                    if(rfall)
-                        code = "r_" + code;
-
-                    // remove ; and \ from last line of marco
-                    if(mode == RunMode.Macro && last)
-                    {
-                        code = Regex.Match(code, "^.+\\)").Value;
-                        suffix = "";
-                    }
-
-                    // align all comments to same position
-                    if(comment.Length == 0)
-                    {
-                        if(mode == RunMode.Macro)
-                        {
-                            if(!last)
-                            {
-                                middle = "".PadLeft((maxCodeLength - code.Length) + 1);
-                                comment = "".PadLeft(MaxCommentLength + 7);
-                            }
-                            else
-                                middle = "";
-                        }
-                        else if(mode == RunMode.Procedure)
-                            middle = "";
-                    }
-                    else
-                    {
-                        middle = "".PadLeft((maxCodeLength - code.Length) + 1);
-
-                        if(mode == RunMode.Macro)
-                        {
-                            comment = "/* " + comment + " */";
-                            if(!last)
-                                comment = comment.PadRight(MaxCommentLength + 7);
-                        }
-                        else if(mode == RunMode.Procedure)
-                            comment = "// " + comment;
-                    }
-
-                    // debug
-                    // const string eol = "\\n";
-                    // result += $"[{prefix}][{code}][{middle}][{comment}][{suffix}]{eol}";
-
-                    result.Add($"{prefix}{code}{middle}{comment}{suffix}");
-
-                    // cache index of last line with write functions
-                    // used to remove ; when extra comments are present at bottom of macro body
-                    lastWriteIdx = result.Count - 1;
+                    result.Add(resultmp.TrimEnd());
                 }
 
                 if(mode == RunMode.Procedure)
@@ -267,8 +399,8 @@ namespace sfall_asm
                 Console.WriteLine("\t--memory      Write the code directly into Fallout2.exe");
                 Console.WriteLine();
                 Console.WriteLine("SSL GENERATION");
-                Console.WriteLine("\t--no-pack     Only write_byte() will be used");
                 Console.WriteLine("\t--no-lower    Hex values won't be lowercased");
+                Console.WriteLine("\t--no-pack     Force using write_byte() function only");
                 Console.WriteLine("\t--rfall       Force using r_write_*() functions");
                 Console.WriteLine();
 
@@ -294,7 +426,7 @@ namespace sfall_asm
                     else if(a == "--no-lower")
                         ssl.Lower = false;
                     else if(a == "--rfall")
-                        ssl.rfall = true;
+                        ssl.RFall = true;
                 }
             }
 
@@ -401,51 +533,22 @@ namespace sfall_asm
                     }
                     else
                     {
-                        string write = "write_", offsetString = offset.ToString("x"), bytesString = "";
+                        string bytesString = "";
                         int writeSize = 0;
 
                         if(ssl.Pack && i + 8 <= bytes.Length)
-                        {
-                            write += "int  ";
                             writeSize = 4;
-                        }
                         else if(ssl.Pack && i + 4 <= bytes.Length)
-                        {
-                            write += "short";
                             writeSize = 2;
-                        }
                         else
-                        {
-                            write += "byte";
                             writeSize = 1;
-
-                            if(ssl.Pack)
-                                write += " ";
-                        }
 
                         for(int w=0, b=i; w<writeSize; w++)
                         {
                             bytesString = $"{bytes[b++]}{bytes[b++]}" + bytesString;
                         }
 
-                        if(ssl.Lower)
-                        {
-                            offsetString = offsetString.ToLower();
-                            bytesString = bytesString.ToLower();
-                        }
-                        else
-                        {
-                            offsetString = offsetString.ToUpper();
-                            bytesString = bytesString.ToUpper();
-                        }
-
-                        ssl.AddWrite($"{write}(0x{offsetString}, 0x{bytesString});", i == 0 ? spl[2].Trim() : "");
-
-                        // vanilla sfall cannot write outside Fallout2.exe memory currently,
-                        // see sfall/Modules/Scripting/Handlers/Memory.cpp (START_VALID_ADDR, END_VALID_ADDR)
-                        // after preparing all lines, code is tweaked to use less restricted sfall-rotators implementation
-                        if(offset < 0x410000 || offset > 0x6B403F)
-                            ssl.rfall = true;
+                        ssl.AddWrite(writeSize, offset, Convert.ToInt32(bytesString, 16), i == 0 ? spl[2].Trim() : "");
 
                         i += writeSize * 2 - 2;
                         offset += writeSize - 1;
@@ -466,6 +569,8 @@ namespace sfall_asm
             }
             else
             {
+                ssl.PreProcess();
+
                 foreach(var line in ssl.Get(runMode))
                 {
                     Console.WriteLine(line);

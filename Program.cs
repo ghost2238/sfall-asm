@@ -464,16 +464,18 @@ namespace sfall_asm
 
             var reMeta = new Regex(@"^//![\t ]+([A-Za-z0-9]+)[\t ]+(.+)$");
             var reInfo = new Regex(@"^///[\t ]+(.+)$");
+            var reAddr = new Regex(@"^[\t ]*(|\$[\+\-][A-Fa-f0-9]+[\t ]+|\$[\t ]+[=]+>[\t ]+)([A-Fa-f0-9]+)");
             bool asmStart = false;
 
+            Match match;
             foreach (var line in lines)
             {
                 // find additional patch configuration
-                Match matchMeta = reMeta.Match(line);
-                if(matchMeta.Success)
+                match = reMeta.Match(line);
+                if(match.Success)
                 {
-                    string var = matchMeta.Groups[1].Value.Trim().ToUpper();
-                    string val = matchMeta.Groups[2].Value.Trim();
+                    string var = match.Groups[1].Value.Trim().ToUpper();
+                    string val = match.Groups[2].Value.Trim();
 
                     // changes "///" behavior to include comment inside macro/procedure body
                     if(var == "ASM")
@@ -486,13 +488,13 @@ namespace sfall_asm
                 }
 
                 // find public comments, included in generated macro/procedure code
-                Match matchInfo = reInfo.Match(line);
-                if(matchInfo.Success)
+                match = reInfo.Match(line);
+                if(match.Success)
                 {
                     if(!asmStart)
-                        ssl.AddInfo(matchInfo.Groups[1].Value.Trim());
+                        ssl.AddInfo(match.Groups[1].Value.Trim());
                     else
-                        ssl.AddComment(matchInfo.Groups[1].Value.Trim());
+                        ssl.AddComment(match.Groups[1].Value.Trim());
 
                     continue;
                 }
@@ -507,8 +509,11 @@ namespace sfall_asm
                 if (spl.Length < 3)
                     continue;
 
-                // extract address, in case first column contains label
-                spl[0] = Regex.Match(spl[0], "^[\t ]*[A-Fa-f0-9]+").Value;
+                // extract address, in case first column contains detailed address info and/or label
+                match = reAddr.Match(line);
+                if(match.Success)
+                    spl[0] = match.Groups[2].Value;
+
                 if(spl[0].Length == 0)
                     continue;
 

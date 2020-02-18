@@ -53,9 +53,12 @@ namespace sfall_asm
 
         class SSLCode
         {
-            // NOTE: enum names starting with "write_" are used as-is in generated code
+            // NOTE: enum names are used as-is in generated code (except 'comment')
             protected enum LineType
             {
+                begin,
+                end,
+                noop,
                 write_byte,
                 write_short,
                 write_int,
@@ -74,7 +77,7 @@ namespace sfall_asm
 
                 public string HexFormat;
 
-                public string FunctionString => (RFall ? "r_" : "") + Enum.GetName(typeof(LineType), Type).ToLower();
+                public string FunctionString => (RFall ? "r_" : "") + Enum.GetName(typeof(LineType), Type);
                 public string AddressString => (HRP ? "r_hrp_offset(" : "") + "0x" + Address.ToString(HexFormat) + (HRP ? ")" : "");
                 public string ValueString
                 {
@@ -110,6 +113,7 @@ namespace sfall_asm
             public readonly string NamePrefix;
             public string Name = "";
             public bool Lower = true;
+            public bool MacroGuard = true;
             public bool Pack = true;
             public bool RFall = false;
 
@@ -128,6 +132,17 @@ namespace sfall_asm
                 Info.Add(info);
             }
 
+            protected void AddLine(Line line, bool first = false)
+            {
+                if(first)
+                    Lines.Insert(0, line);
+                else
+                {
+                    Lines.Add(line);
+                    LastLine = Lines.Last();
+                }
+            }
+
             public void AddWrite(int size, int address, int value, string comment = "")
             {
                 LineType type;
@@ -141,8 +156,8 @@ namespace sfall_asm
                 else
                     throw new ArgumentOutOfRangeException(nameof(size));
 
-                Lines.Add(new Line(type, address, value, comment));
-                LastWriteLine = LastLine = Lines.Last();
+                AddLine(new Line(type, address, value, comment));
+                LastWriteLine = LastLine;
 
                 // vanilla sfall cannot write outside Fallout2.exe memory currently,
                 // after preparing all lines, code is tweaked to use less restricted rfall implementation
@@ -174,9 +189,7 @@ namespace sfall_asm
 
             public void AddComment(string comment)
             {
-                Lines.Add(new Line(LineType.comment, 0, 0, comment));
-
-                LastLine = Lines.Last();
+                AddLine(new Line(LineType.comment, 0, 0, comment));
             }
 
             protected void PreProcessNOP()
@@ -231,9 +244,49 @@ namespace sfall_asm
                 }
             }
 
-            public void PreProcess()
+            protected void PreProcessMacro()
+            {
+                if(MacroGuard)
+                {
+                    int writeCount = 0;
+                    foreach(Line line in Lines)
+                    {
+                        switch(line.Type)
+                        {
+                            case LineType.write_byte:
+                            case LineType.write_short:
+                            case LineType.write_int:
+                                writeCount++;
+                                break;
+                        }
+
+                        if(writeCount >= 2)
+                            break;
+                    }
+
+                    if(writeCount >= 2)
+                    {
+                        AddLine(new Line(LineType.begin, 0, 0), true);
+                        AddLine(new Line(LineType.end, 0, 0));
+                        AddLine(new Line(LineType.noop, 0, 0));
+                    }
+                }
+            }
+
+            protected void PreProcessProcedure()
+            {
+                AddLine(new Line(LineType.begin, 0, 0), true);
+                AddLine(new Line(LineType.end, 0, 0));
+            }
+
+            public void PreProcess(RunMode mode)
             {
                 PreProcessNOP();
+
+                if(mode == RunMode.Macro)
+                    PreProcessMacro();
+                else if(mode == RunMode.Procedure)
+                    PreProcessProcedure();
             }
 
             public string GetName()
@@ -288,20 +341,7 @@ namespace sfall_asm
                 List<string> result = new List<string>();
                 string resultmp;
 
-                string prefix = "";
-                if(mode == RunMode.Macro)
-                {
-                    prefix = new string(' ', 8 + (NamePrefix.Length > 0 ? NamePrefix.Length + 1 : 0));
-
-                    result.Add($"#define {GetName()} \\");
-                }
-                else if(mode == RunMode.Procedure)
-                {
-                    prefix = new string(' ', 3); // default SFallEditor setting... yeah. i know.
-
-                    result.Add($"inline procedure {GetName()}");
-                    result.Add("begin");
-                }
+                int writeCount = 0;
 
                 // collect maximum length of each subelement
                 int maxFunctionLength = 0, maxAddressLength = 0, maxValueLength = 0, maxCommentLength = 0;
@@ -312,6 +352,7 @@ namespace sfall_asm
                 {
                     if(line.Type == LineType.write_byte || line.Type == LineType.write_short || line.Type == LineType.write_int)
                     {
+                        writeCount++;
                         line.HexFormat = Lower ? "x" : "X";
 
                         maxFunctionLength = Math.Max(maxFunctionLength, line.FunctionString.Length);
@@ -336,17 +377,58 @@ namespace sfall_asm
                 else if(mode == RunMode.Procedure)
                     maxRawLength = Math.Max(maxRawWriteProcedureLength, maxRawCommentLength);
 
+                string prefix = "";
+                if(mode == RunMode.Macro)
+                {
+                    prefix = new string(' ', 8 + (NamePrefix.Length > 0 ? NamePrefix.Length + 1 : 0));
+
+                    result.Add($"#define {GetName()} \\");
+                }
+                else if(mode == RunMode.Procedure)
+                {
+                    prefix = new string(' ', 3); // default SFallEditor setting... yeah. i know.
+
+                    result.Add($"inline procedure {GetName()}");
+                }
+
                 foreach(var line in Lines)
                 {
                     resultmp = prefix;
 
                     string comment(string value) => (mode == RunMode.Macro ? $"/* {value} */" : $"// {value}");
 
-                    if(line.Type == LineType.write_byte || line.Type == LineType.write_short || line.Type == LineType.write_int)
+                    if(line.Type == LineType.begin || line.Type == LineType.end || line.Type == LineType.noop)
                     {
+                        bool rfall = line.RFall;
+                        line.RFall = false;
+
+                        // align begin/end to right when generating procedure
+                        if(mode == RunMode.Procedure)
+                            resultmp = " ";
+
+                        resultmp = resultmp.Remove(resultmp.Length - 1);
+                        resultmp += line.FunctionString.PadRight(maxRawLength);
+
+                        if(line.Type == LineType.noop && line != LastLine)
+                            resultmp += ";";
+
+                        line.RFall = rfall;
+                    }
+                    else if(line.Type == LineType.write_byte || line.Type == LineType.write_short || line.Type == LineType.write_int)
+                    {
+                        string semicolon = ";";
+
+                        if(mode == RunMode.Macro)
+                        {
+                            if(!MacroGuard && line == LastWriteLine)
+                                semicolon = " ";
+                            else if(writeCount == 1)
+                                semicolon = " ";
+                        }
+
                         resultmp += line.FunctionString.PadRight(maxFunctionLength);
                         resultmp += $"({line.AddressString}, ".PadRight(maxAddressLength + 3);
-                        resultmp += $"{line.ValueString}){(mode == RunMode.Macro && line == LastWriteLine ? " " : ";")} ".PadRight(maxValueLength + 3);
+                        resultmp += $"{line.ValueString}){semicolon} ".PadRight(maxValueLength + 3);
 
                         if(line.Comment.Length > 0)
                             resultmp += comment(line.Comment);
@@ -357,7 +439,7 @@ namespace sfall_asm
                     if(mode == RunMode.Macro)
                     {
                         // make sure all line types are same length before adding suffix
-                        resultmp = resultmp.PadRight(maxRawLength + prefix.Length);
+                        resultmp = resultmp.PadRight(prefix.Length + maxRawLength);
 
                         if(line != LastLine)
                             resultmp += " \\";
@@ -366,14 +448,13 @@ namespace sfall_asm
                     result.Add(resultmp.TrimEnd());
                 }
 
-                if(mode == RunMode.Procedure)
-                    result.Add("end");
-
                 return result;
             }
 
             public List<string> Get(RunMode mode)
             {
+                PreProcess(mode);
+
                 List<string> result = new List<string>();
 
                 result.AddRange(GetInfo());
@@ -394,14 +475,15 @@ namespace sfall_asm
                 Console.WriteLine(System.AppDomain.CurrentDomain.FriendlyName + " [asm_patch] <options...>");
                 Console.WriteLine();
                 Console.WriteLine("RUN MODE");
-                Console.WriteLine("\t--macro       Generate patch file as preprocessor macro (default)");
-                Console.WriteLine("\t--procedure   Generate patch file as inline procedure");
-                Console.WriteLine("\t--memory      Write the code directly into Fallout2.exe");
+                Console.WriteLine("\t--macro           Generate patch file as preprocessor macro (default)");
+                Console.WriteLine("\t--procedure       Generate patch file as inline procedure");
+                Console.WriteLine("\t--memory          Write the code directly into Fallout2.exe");
                 Console.WriteLine();
                 Console.WriteLine("SSL GENERATION");
-                Console.WriteLine("\t--no-lower    Hex values won't be lowercased");
-                Console.WriteLine("\t--no-pack     Force using write_byte() function only");
-                Console.WriteLine("\t--rfall       Force using r_write_*() functions");
+                Console.WriteLine("\t--no-lower        Hex values won't be lowercased");
+                Console.WriteLine("\t--no-macro-guard  Macros won't be guarded with begin/end");
+                Console.WriteLine("\t--no-pack         Force using write_byte() function only");
+                Console.WriteLine("\t--rfall           Force using r_write_*() functions");
                 Console.WriteLine();
 
                 return;
@@ -425,6 +507,8 @@ namespace sfall_asm
                         ssl.Pack = false;
                     else if(a == "--no-lower")
                         ssl.Lower = false;
+                    else if(a == "--no-macro-guard")
+                        ssl.MacroGuard = false;
                     else if(a == "--rfall")
                         ssl.RFall = true;
                 }
@@ -550,7 +634,7 @@ namespace sfall_asm
 
                         for(int w=0, b=i; w<writeSize; w++)
                         {
-                            bytesString = $"{bytes[b++]}{bytes[b++]}" + bytesString;
+                            bytesString = $"{bytes[b++]}{bytes[b++]}{bytesString}";
                         }
 
                         ssl.AddWrite(writeSize, offset, Convert.ToInt32(bytesString, 16), i == 0 ? spl[2].Trim() : "");
@@ -574,8 +658,6 @@ namespace sfall_asm
             }
             else
             {
-                ssl.PreProcess();
-
                 foreach(var line in ssl.Get(runMode))
                 {
                     Console.WriteLine(line);

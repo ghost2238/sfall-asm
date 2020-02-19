@@ -464,6 +464,12 @@ namespace sfall_asm
             }
         }
 
+        static void MemoryArgError(string var)
+        {
+            Console.WriteLine($"Unable to resolve the variable [{var}], did you specify the correct --memory-args?");
+            Environment.Exit(1);
+        }
+
         static void Main(string[] args)
         {
             // force english language, for exceptions
@@ -485,10 +491,14 @@ namespace sfall_asm
                 Console.WriteLine("\t--no-pack         Force using write_byte() function only");
                 Console.WriteLine("\t--rfall           Force using r_write_*() functions");
                 Console.WriteLine();
+                Console.WriteLine("PATCH VARIABLES");
+                Console.WriteLine("\t--memory-args     Set memory variables");
 
                 return;
             }
 
+            // Used to resolve [some_var] in the address field.
+            var memoryArgs = new Dictionary<string, int>();
             RunMode runMode = RunMode.Macro;
             SSLCode ssl = new SSLCode("VOODOO");
             if(args.Length>1)
@@ -511,6 +521,26 @@ namespace sfall_asm
                         ssl.MacroGuard = false;
                     else if(a == "--rfall")
                         ssl.RFall = true;
+
+                    else if (a.StartsWith("--memory-args="))
+                    {
+                        var arg = a.Replace("--memory-args=", "");
+                        var malformed = "The argument --memory-args is malformed, should be of the form --memory-args='var_1=0x420000; var_2=0x430000'";
+                        var quoteIdx = arg.IndexOf('\'', 3);
+                        if (quoteIdx == -1)
+                        {
+                            Console.WriteLine(malformed);
+                            Environment.Exit(1);
+                        }
+
+                        var enclosed = arg.Substring(1, quoteIdx - 1);
+                        var allVars = enclosed.Split(';');
+                        foreach (var aVar in allVars)
+                        {
+                            var keyVal = aVar.Replace(" ", "").Split('=');
+                            memoryArgs[keyVal[0]] = Convert.ToInt32(keyVal[1], 16);
+                        }
+                    }
                 }
             }
 
@@ -597,8 +627,21 @@ namespace sfall_asm
                 match = reAddr.Match(line);
                 if(match.Success)
                     spl[0] = match.Groups[2].Value;
+                else // might be a variable also, [memory_var]
+                {
+                    // extract and resolve it
+                    if (spl[0].Count(x => x == '[') == 1 && spl[0].Count(x => x == ']') == 1)
+                    {
+                        var startIdx = spl[0].IndexOf('[');
+                        var endIdx = spl[0].IndexOf(']');
+                        var unresolved = spl[0].Substring(startIdx+1, endIdx - startIdx - 1);
+                        if (!memoryArgs.ContainsKey(unresolved))
+                            MemoryArgError(unresolved);
+                        spl[0] = memoryArgs[unresolved].ToString("x");
+                    }
+                }
 
-                if(spl[0].Length == 0)
+                if (spl[0].Length == 0)
                     continue;
 
                 // changes "///" behavior to include comment inside macro/procedure body
@@ -611,6 +654,42 @@ namespace sfall_asm
                 var bytes = spl[1].Replace(" ", "");
                 for (var i = 0; i < bytes.Length; i += 2)
                 {
+                    // instructions which supports using absolute->rel addressing or memory variable
+                    // https://github.com/ghost2238/sfall-asm/issues/3
+                    // this only works for 32-bit, if we are in 16-bit mode it won't work
+                    // but since we don't care about that at the moment it should be fine.
+                    if ((bytes[0] == 'E' && bytes[1] == '9') || 
+                       (bytes[0] == 'E' && bytes[1] == '8'))
+                    {
+                        if(bytes[2] == '[')
+                        {
+                            var y = 3;
+                            var variable = "";
+                            while(true)
+                            {
+                                variable += bytes[y++];
+                                if (bytes[y] == ']')
+                                    break;
+                            }
+                            int destination = 0;
+                            if(variable[0] == '0' && variable[1] == 'x')
+                            {
+                                destination = Convert.ToInt32(variable, 16);
+                            }
+                            else
+                            {
+                                if (!memoryArgs.ContainsKey(variable))
+                                    MemoryArgError(variable);
+                                destination = memoryArgs[variable];
+                            }
+                            // calculate relative jump
+                            int jmpBytes = destination - offset - 5;
+                            // endianness conversion
+                            byte[] end = BitConverter.GetBytes(jmpBytes).Reverse().ToArray();
+                            bytes = bytes.Replace($"[{variable}]", BitConverter.ToInt32(end, 0).ToString("x")).ToUpper();
+                        }
+                    }
+
                     if (runMode == RunMode.Memory)
                     {
                         var @byte = Convert.ToByte($"{bytes[i]}{bytes[i + 1]}", 16);

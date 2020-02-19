@@ -525,20 +525,40 @@ namespace sfall_asm
                     else if (a.StartsWith("--memory-args="))
                     {
                         var arg = a.Replace("--memory-args=", "");
-                        var malformed = "The argument --memory-args is malformed, should be of the form --memory-args='var_1=0x420000; var_2=0x430000'";
-                        var quoteIdx = arg.IndexOf('\'', 3);
-                        if (quoteIdx == -1)
-                        {
-                            Console.WriteLine(malformed);
-                            Environment.Exit(1);
-                        }
-
-                        var enclosed = arg.Substring(1, quoteIdx - 1);
-                        var allVars = enclosed.Split(';');
+                        var allVars = arg.Split(',');
                         foreach (var aVar in allVars)
                         {
                             var keyVal = aVar.Replace(" ", "").Split('=');
-                            memoryArgs[keyVal[0]] = Convert.ToInt32(keyVal[1], 16);
+                            if (keyVal.Length < 2)
+                                continue;
+                            var var = keyVal[0];
+                            var val = keyVal[1];
+                            int converted = 0;
+                            if(val == "")
+                            {
+                                Console.WriteLine($"The value for {var} can't be empty, it needs to be a valid hex memory address.");
+                                Environment.Exit(1);
+                            }
+
+                            try
+                            {
+                                converted = Convert.ToInt32(val, 16);
+                            }
+                            catch(Exception)
+                            {
+                                Console.WriteLine($"{val} is not a valid hex memory address value for the variable {var} given in --memory-args.");
+                                Environment.Exit(1);
+                            }
+
+                            memoryArgs[var] = converted;
+                        }
+                    }
+                    else
+                    {
+                        if (a != args[0])
+                        {
+                            Console.WriteLine($"'{a}' is not a valid argument.");
+                            Environment.Exit(1);
                         }
                     }
                 }
@@ -687,6 +707,10 @@ namespace sfall_asm
                             // endianness conversion
                             byte[] end = BitConverter.GetBytes(jmpBytes).Reverse().ToArray();
                             bytes = bytes.Replace($"[{variable}]", BitConverter.ToInt32(end, 0).ToString("x")).ToUpper();
+                            // https://github.com/ghost2238/sfall-asm/issues/3#issuecomment-588108479
+                            // pad address to avoid corrupted byte string
+                            if (bytes.Length < 10)
+                                bytes = bytes.PadRight(10, '0'); 
                         }
                     }
 

@@ -48,13 +48,14 @@ namespace sfall_asm
         class Fallout2
         {
             private Process fallout2 = null;
+
             public Fallout2()
             {
                 var pids = Process.GetProcessesByName("Fallout2");
                 if (pids.Length == 0)
                 {
                     Console.WriteLine("Unable to find Fallout2.exe process");
-                    return;
+                    Environment.Exit(1);
                 }
                 fallout2 = pids[0];
             }

@@ -861,7 +861,6 @@ namespace sfall_asm
             }
 
             ProcessPatch(SafeReadAllLines(args[0]), runMode, ssl, memoryArgs);
-            Console.ReadKey();
         }
     }
 }

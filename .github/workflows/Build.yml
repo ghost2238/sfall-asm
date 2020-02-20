@@ -31,6 +31,7 @@ jobs:
     run:   |
            :
            "$MSBUILD_EXE" sfall-asm.sln -p:Configuration=Release
+           mv patches/README.md patches/HintBook.txt
            mv patches bin/Release
     shell: bash
 

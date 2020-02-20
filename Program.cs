@@ -75,15 +75,93 @@ namespace sfall_asm
 
         public static class Asm
         {
-            // Calculate the amount of bytes to specify rel jump/call
-            public static int CalculateRelJump32(int from, int to)
+            public static int SwapEndian(int num)
             {
-                // calculate relative jump
-                int jmpBytes = to - from - 5;
-                // endianness conversion
-                byte[] end = BitConverter.GetBytes(jmpBytes).Reverse().ToArray();
+                byte[] end = BitConverter.GetBytes(num).Reverse().ToArray();
                 return BitConverter.ToInt32(end, 0);
             }
+
+            public static short SwapEndian(short num)
+            {
+                byte[] end = BitConverter.GetBytes(num).Reverse().ToArray();
+                return BitConverter.ToInt16(end, 0);
+            }
+
+            // Calculate the jump distance for rel jump/call
+            public static int CalculateRelJump32(int from, int to) => SwapEndian(to - from - 5);
+        }
+
+        // Bytestring which can also contain some random meta stuff.
+        class ByteString
+        {
+            private string str;
+            public int offset;
+            public ByteString(string str)
+            {
+                this.str = str.Replace(" ", "");
+                this.offset = 0;
+            }
+
+            public char PeekChar(int pos)
+            {
+                if (offset + pos >= str.Length)
+                    return '\0';
+                return str[offset + pos];
+            }
+            public string ReadChars(int num)
+            {
+                var read = str.Substring(offset, num);
+                offset += num;
+                return read;
+            }
+            public byte ReadByte()
+            {
+                var b = PeekByte();
+                offset += 2;
+                return b;
+            }
+            public byte PeekByte()
+            {
+                if (EOF) 
+                    return 0;
+                // This might not be the best solution for https://github.com/ghost2238/sfall-asm/issues/4
+                if (PeekChar(0) == ':')
+                    offset++;
+
+                return Convert.ToByte($"{PeekChar(0)}{PeekChar(1)}", 16);
+            }
+            public bool HasBytesLeft(int numBytes) => offset + numBytes * 2 <= str.Length;
+            public int AsInt(int numBytes) 
+            {
+                if (numBytes == 1)
+                    return (int)ReadByte();
+                else if (numBytes == 2)
+                    return (int)Asm.SwapEndian(Convert.ToInt16(ReadChars(numBytes * 2), 16));
+                else if (numBytes == 3)
+                    throw new Exception("Can't read 3 bytes.");
+                else if (numBytes == 4)
+                    return Asm.SwapEndian(Convert.ToInt32(ReadChars(numBytes * 2), 16));
+                else
+                    throw new Exception("Can't read more than 4 bytes.");
+            }
+
+
+            public void ResolveMemoryArg(MemoryArgs args, int currentOffset)
+            {
+                int addr = args.ResolveAddress(str.Substring(offset+1), out string resolvedLiteral);
+                int jumpBytes = Asm.CalculateRelJump32(currentOffset, addr);
+                var litBrackets = $"[{resolvedLiteral}]";
+
+                var jumpBytesStr = jumpBytes.ToString("x");
+                // https://github.com/ghost2238/sfall-asm/issues/3#issuecomment-588108479
+                // pad address to avoid corrupted byte string
+                if (jumpBytesStr.Length < 8)
+                    jumpBytesStr = jumpBytesStr.PadRight(8, '0');
+                str = str.Replace(litBrackets, jumpBytesStr).ToUpper();
+
+            }
+
+            public bool EOF => offset >= str.Length;
         }
 
         // Used to resolve [some_var] in the address field or in rel instructions.
@@ -640,57 +718,41 @@ namespace sfall_asm
                 if (offset == 0)
                     offset = lastOffset;
 
-                var bytes = spl[1].Replace(" ", "");
-                for (var i = 0; i < bytes.Length; i += 2)
+                var bytes = new ByteString(spl[1]);
+                bool opLine = true;
+                while (!bytes.EOF)
                 {
                     // instructions which supports using absolute->rel addressing or memory variable
                     // https://github.com/ghost2238/sfall-asm/issues/3
                     // this only works for 32-bit, if we are in 16-bit mode it won't work
                     // but since we don't care about that at the moment it should be fine.
-                    if ((bytes[0] == 'E' && bytes[1] == '9') ||
-                        (bytes[0] == 'E' && bytes[1] == '8'))
+                    if ((bytes.PeekByte() == 0xE9) || (bytes.PeekByte() == 0xE8))
                     {
-                        if (bytes[2] == '[')
-                        {
-                            int addr = memoryArgs.ResolveAddress(bytes.Substring(2), out string resolvedLiteral);
-                            int jumpBytes = Asm.CalculateRelJump32(offset, addr);
-                            bytes = bytes.Replace($"[{resolvedLiteral}]", jumpBytes.ToString("x")).ToUpper();
-                            // https://github.com/ghost2238/sfall-asm/issues/3#issuecomment-588108479
-                            // pad address to avoid corrupted byte string
-                            if (bytes.Length < 10)
-                                bytes = bytes.PadRight(10, '0');
-                        }
+                        if (bytes.PeekChar(2) == '[')
+                            bytes.ResolveMemoryArg(memoryArgs, offset);
                     }
 
                     if (runMode == RunMode.Memory)
                     {
-                        var @byte = Convert.ToByte($"{bytes[i]}{bytes[i + 1]}", 16);
                         memorybytes.Add(new MemoryPatch()
                         {
-                            data = new byte[] { @byte },
+                            data = new byte[] { bytes.ReadByte() },
                             offset = offset
                         });
                     }
                     else
                     {
-                        string bytesString = "";
                         int writeSize = 0;
-
-                        if (ssl.Pack && i + 8 <= bytes.Length)
+                        if (ssl.Pack && bytes.HasBytesLeft(4))
                             writeSize = 4;
-                        else if (ssl.Pack && i + 4 <= bytes.Length)
+                        else if (ssl.Pack && bytes.HasBytesLeft(2))
                             writeSize = 2;
                         else
                             writeSize = 1;
 
-                        for (int w = 0, b = i; w < writeSize; w++)
-                        {
-                            bytesString = $"{bytes[b++]}{bytes[b++]}{bytesString}";
-                        }
-
-                        ssl.AddWrite(writeSize, offset, Convert.ToInt32(bytesString, 16), i == 0 ? spl[2].Trim() : "");
-
-                        i += writeSize * 2 - 2;
+                        ssl.AddWrite(writeSize, offset, bytes.AsInt(writeSize), opLine ? spl[2].Trim() : "");
+                        // this is to decide if comment should be written or not.
+                        opLine = false;
                         offset += writeSize - 1;
                     }
 
@@ -799,6 +861,7 @@ namespace sfall_asm
             }
 
             ProcessPatch(SafeReadAllLines(args[0]), runMode, ssl, memoryArgs);
+            Console.ReadKey();
         }
     }
 }

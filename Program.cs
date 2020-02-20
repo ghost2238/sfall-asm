@@ -45,10 +45,107 @@ namespace sfall_asm
             Memory
         }
 
+        class Fallout2
+        {
+            private Process fallout2 = null;
+            public Fallout2()
+            {
+                var pids = Process.GetProcessesByName("Fallout2");
+                if (pids.Length == 0)
+                {
+                    Console.WriteLine("Unable to find Fallout2.exe process");
+                    return;
+                }
+                fallout2 = pids[0];
+            }
+
+            public void WriteMemoryPatches(List<MemoryPatch> patches)
+            {
+                var ptr = OpenProcess(0x1F0FFF, IntPtr.Zero, new IntPtr(fallout2.Id));
+                foreach (var patch in patches)
+                    WriteProcessMemory(ptr, (IntPtr)patch.offset, patch.data, patch.data.Length, out IntPtr _);
+            }
+        }
+
         class MemoryPatch
         {
             public byte[] data;
             public int offset;
+        }
+
+        public static class Asm
+        {
+            // Calculate the amount of bytes to specify rel jump/call
+            public static int CalculateRelJump32(int from, int to)
+            {
+                // calculate relative jump
+                int jmpBytes = to - from - 5;
+                // endianness conversion
+                byte[] end = BitConverter.GetBytes(jmpBytes).Reverse().ToArray();
+                return BitConverter.ToInt32(end, 0);
+            }
+        }
+
+        // Used to resolve [some_var] in the address field or in rel instructions.
+        class MemoryArgs
+        {
+            private Dictionary<string, int> vars = new Dictionary<string, int>();
+            public int this[string idx]
+            {
+                get => vars[idx];
+                set { vars[idx] = value; }
+            }
+
+            public void FromArgString(string arg)
+            {
+                var allVars = arg.Split(',');
+                foreach (var aVar in allVars)
+                {
+                    var keyVal = aVar.Replace(" ", "").Split('=');
+                    if (keyVal.Length < 2)
+                        continue;
+                    var var = keyVal[0];
+                    var val = keyVal[1];
+                    int converted = 0;
+                    if (val == "")
+                    {
+                        Console.WriteLine($"The value for {var} can't be empty, it needs to be a valid hex memory address.");
+                        Environment.Exit(1);
+                    }
+
+                    try
+                    {
+                        converted = Convert.ToInt32(val, 16);
+                    }
+                    catch (Exception)
+                    {
+                        Console.WriteLine($"{val} is not a valid hex memory address value for the variable {var} given in --memory-args.");
+                        Environment.Exit(1);
+                    }
+
+                    vars[var] = converted;
+                }
+            }
+
+            public int ResolveAddress(string str, out string resolvedLiteral)
+            {
+                var startIdx = str.IndexOf('[');
+                var endIdx = str.IndexOf(']');
+                var literal = str.Substring(startIdx + 1, endIdx - startIdx - 1);
+                resolvedLiteral = literal;
+                if (literal[0] == '0' && literal[1] == 'x')
+                {
+                    return Convert.ToInt32(literal, 16);
+                }
+                else
+                {
+                    if (!IsDefined(literal))
+                        MemoryArgError(literal);
+                    return vars[literal];
+                }
+            }
+
+            public bool IsDefined(string var) => vars.ContainsKey(var);
         }
 
         class SSLCode
@@ -470,6 +567,170 @@ namespace sfall_asm
             Environment.Exit(1);
         }
 
+        static void ProcessPatch(List<string> lines, RunMode runMode, SSLCode ssl, MemoryArgs memoryArgs)
+        {
+            var memorybytes = new List<MemoryPatch>();
+            var lastOffset = 0;
+
+            var reMeta = new Regex(@"^//![\t ]+([A-Za-z0-9]+)[\t ]+(.+)$");
+            var reInfo = new Regex(@"^///[\t ]+(.+)$");
+            var reAddr = new Regex(@"^[\t ]*(|\$[\+\-][A-Fa-f0-9]+[\t ]+|\$[\t ]+[=]+>[\t ]+)([A-Fa-f0-9]+)");
+            bool asmStart = false;
+
+            Match match;
+            foreach (var line in lines)
+            {
+                // find additional patch configuration
+                match = reMeta.Match(line);
+                if (match.Success)
+                {
+                    string var = match.Groups[1].Value.Trim().ToUpper();
+                    string val = match.Groups[2].Value.Trim();
+
+                    // changes "///" behavior to include comment inside macro/procedure body
+                    if (var == "ASM")
+                        asmStart = true;
+                    // sets macro/procedure name
+                    else if (var == "NAME")
+                        ssl.Name = val;
+
+                    continue;
+                }
+
+                // find public comments, included in generated macro/procedure code
+                match = reInfo.Match(line);
+                if (match.Success)
+                {
+                    if (!asmStart)
+                        ssl.AddInfo(match.Groups[1].Value.Trim());
+                    else
+                        ssl.AddComment(match.Groups[1].Value.Trim());
+
+                    continue;
+                }
+
+                if (line.Length >= 2 && line[0] == '/' && line[1] == '/')
+                    continue;
+
+                if (!line.Contains('|'))
+                    continue;
+
+                var spl = line.Split('|');
+                if (spl.Length < 3)
+                    continue;
+
+                // extract address, in case first column contains detailed address info and/or label
+                match = reAddr.Match(line);
+                if (match.Success)
+                    spl[0] = match.Groups[2].Value;
+                else // might be a variable also, [memory_var]
+                {
+                    // extract and resolve it
+                    if (spl[0].Count(x => x == '[') == 1 && spl[0].Count(x => x == ']') == 1)
+                        spl[0] = memoryArgs.ResolveAddress(spl[0], out _).ToString("x");
+                }
+
+                if (spl[0].Length == 0)
+                    continue;
+
+                // changes "///" behavior to include comment inside macro/procedure body
+                asmStart = true;
+
+                var offset = Convert.ToInt32(spl[0].Trim(), 16);
+                if (offset == 0)
+                    offset = lastOffset;
+
+                var bytes = spl[1].Replace(" ", "");
+                for (var i = 0; i < bytes.Length; i += 2)
+                {
+                    // instructions which supports using absolute->rel addressing or memory variable
+                    // https://github.com/ghost2238/sfall-asm/issues/3
+                    // this only works for 32-bit, if we are in 16-bit mode it won't work
+                    // but since we don't care about that at the moment it should be fine.
+                    if ((bytes[0] == 'E' && bytes[1] == '9') ||
+                        (bytes[0] == 'E' && bytes[1] == '8'))
+                    {
+                        if (bytes[2] == '[')
+                        {
+                            int addr = memoryArgs.ResolveAddress(bytes.Substring(2), out string resolvedLiteral);
+                            int jumpBytes = Asm.CalculateRelJump32(offset, addr);
+                            bytes = bytes.Replace($"[{resolvedLiteral}]", jumpBytes.ToString("x")).ToUpper();
+                            // https://github.com/ghost2238/sfall-asm/issues/3#issuecomment-588108479
+                            // pad address to avoid corrupted byte string
+                            if (bytes.Length < 10)
+                                bytes = bytes.PadRight(10, '0');
+                        }
+                    }
+
+                    if (runMode == RunMode.Memory)
+                    {
+                        var @byte = Convert.ToByte($"{bytes[i]}{bytes[i + 1]}", 16);
+                        memorybytes.Add(new MemoryPatch()
+                        {
+                            data = new byte[] { @byte },
+                            offset = offset
+                        });
+                    }
+                    else
+                    {
+                        string bytesString = "";
+                        int writeSize = 0;
+
+                        if (ssl.Pack && i + 8 <= bytes.Length)
+                            writeSize = 4;
+                        else if (ssl.Pack && i + 4 <= bytes.Length)
+                            writeSize = 2;
+                        else
+                            writeSize = 1;
+
+                        for (int w = 0, b = i; w < writeSize; w++)
+                        {
+                            bytesString = $"{bytes[b++]}{bytes[b++]}{bytesString}";
+                        }
+
+                        ssl.AddWrite(writeSize, offset, Convert.ToInt32(bytesString, 16), i == 0 ? spl[2].Trim() : "");
+
+                        i += writeSize * 2 - 2;
+                        offset += writeSize - 1;
+                    }
+
+                    offset++;
+                    lastOffset = offset;
+                }
+            }
+
+            if (runMode == RunMode.Memory)
+            {
+                new Fallout2().WriteMemoryPatches(memorybytes);
+            }
+            else
+            {
+                foreach (var line in ssl.Get(runMode))
+                {
+                    Console.WriteLine(line);
+                }
+            }
+        }
+
+        static List<string> SafeReadAllLines(string file)
+        {
+            if (!File.Exists(file))
+            {
+                Console.WriteLine(file + " doesn't exist.");
+                return null;
+            }
+            try
+            {
+                return File.ReadAllLines(file).ToList();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Unable to open file: " + ex.Message);
+                Environment.Exit(1);
+                return null;
+            };
+        }
+
         static void Main(string[] args)
         {
             // force english language, for exceptions
@@ -497,8 +758,8 @@ namespace sfall_asm
                 return;
             }
 
-            // Used to resolve [some_var] in the address field.
-            var memoryArgs = new Dictionary<string, int>();
+            
+            var memoryArgs = new MemoryArgs();
             RunMode runMode = RunMode.Macro;
             SSLCode ssl = new SSLCode("VOODOO");
             if(args.Length>1)
@@ -524,34 +785,7 @@ namespace sfall_asm
 
                     else if (a.StartsWith("--memory-args="))
                     {
-                        var arg = a.Replace("--memory-args=", "");
-                        var allVars = arg.Split(',');
-                        foreach (var aVar in allVars)
-                        {
-                            var keyVal = aVar.Replace(" ", "").Split('=');
-                            if (keyVal.Length < 2)
-                                continue;
-                            var var = keyVal[0];
-                            var val = keyVal[1];
-                            int converted = 0;
-                            if(val == "")
-                            {
-                                Console.WriteLine($"The value for {var} can't be empty, it needs to be a valid hex memory address.");
-                                Environment.Exit(1);
-                            }
-
-                            try
-                            {
-                                converted = Convert.ToInt32(val, 16);
-                            }
-                            catch(Exception)
-                            {
-                                Console.WriteLine($"{val} is not a valid hex memory address value for the variable {var} given in --memory-args.");
-                                Environment.Exit(1);
-                            }
-
-                            memoryArgs[var] = converted;
-                        }
+                        memoryArgs.FromArgString(a.Replace("--memory-args=", ""));
                     }
                     else
                     {
@@ -564,208 +798,7 @@ namespace sfall_asm
                 }
             }
 
-            if (!File.Exists(args[0]))
-            {
-                Console.WriteLine(args[0] + " doesn't exist.");
-                return;
-            }
-
-            var lines = new List<string>();
-            try
-            {
-                lines.AddRange(File.ReadAllLines(args[0]));
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Unable to open file: " + ex.Message);
-                Environment.Exit(1);
-            };
-
-            Process fallout2=null;
-            if(runMode == RunMode.Memory)
-            {
-                var pids = Process.GetProcessesByName("Fallout2");
-                if (pids.Length == 0)
-                {
-                    Console.WriteLine("Unable to find Fallout2.exe process");
-                    return;
-                }
-                fallout2 = pids[0];
-            }
-
-            var memorybytes = new List<MemoryPatch>();
-            var lastOffset = 0;
-
-            var reMeta = new Regex(@"^//![\t ]+([A-Za-z0-9]+)[\t ]+(.+)$");
-            var reInfo = new Regex(@"^///[\t ]+(.+)$");
-            var reAddr = new Regex(@"^[\t ]*(|\$[\+\-][A-Fa-f0-9]+[\t ]+|\$[\t ]+[=]+>[\t ]+)([A-Fa-f0-9]+)");
-            bool asmStart = false;
-
-            Match match;
-            foreach (var line in lines)
-            {
-                // find additional patch configuration
-                match = reMeta.Match(line);
-                if(match.Success)
-                {
-                    string var = match.Groups[1].Value.Trim().ToUpper();
-                    string val = match.Groups[2].Value.Trim();
-
-                    // changes "///" behavior to include comment inside macro/procedure body
-                    if(var == "ASM")
-                        asmStart = true;
-                    // sets macro/procedure name
-                    else if(var == "NAME")
-                        ssl.Name = val;
-
-                    continue;
-                }
-
-                // find public comments, included in generated macro/procedure code
-                match = reInfo.Match(line);
-                if(match.Success)
-                {
-                    if(!asmStart)
-                        ssl.AddInfo(match.Groups[1].Value.Trim());
-                    else
-                        ssl.AddComment(match.Groups[1].Value.Trim());
-
-                    continue;
-                }
-
-                if (line.Length >= 2 && line[0] == '/' && line[1] == '/')
-                    continue;
-
-                if (!line.Contains('|'))
-                    continue;
-
-                var spl = line.Split('|');
-                if (spl.Length < 3)
-                    continue;
-
-                // extract address, in case first column contains detailed address info and/or label
-                match = reAddr.Match(line);
-                if(match.Success)
-                    spl[0] = match.Groups[2].Value;
-                else // might be a variable also, [memory_var]
-                {
-                    // extract and resolve it
-                    if (spl[0].Count(x => x == '[') == 1 && spl[0].Count(x => x == ']') == 1)
-                    {
-                        var startIdx = spl[0].IndexOf('[');
-                        var endIdx = spl[0].IndexOf(']');
-                        var unresolved = spl[0].Substring(startIdx+1, endIdx - startIdx - 1);
-                        if (!memoryArgs.ContainsKey(unresolved))
-                            MemoryArgError(unresolved);
-                        spl[0] = memoryArgs[unresolved].ToString("x");
-                    }
-                }
-
-                if (spl[0].Length == 0)
-                    continue;
-
-                // changes "///" behavior to include comment inside macro/procedure body
-                asmStart = true;
-
-                var offset = Convert.ToInt32(spl[0].Trim(), 16);
-                if (offset == 0)
-                    offset = lastOffset;
-
-                var bytes = spl[1].Replace(" ", "");
-                for (var i = 0; i < bytes.Length; i += 2)
-                {
-                    // instructions which supports using absolute->rel addressing or memory variable
-                    // https://github.com/ghost2238/sfall-asm/issues/3
-                    // this only works for 32-bit, if we are in 16-bit mode it won't work
-                    // but since we don't care about that at the moment it should be fine.
-                    if ((bytes[0] == 'E' && bytes[1] == '9') || 
-                       (bytes[0] == 'E' && bytes[1] == '8'))
-                    {
-                        if(bytes[2] == '[')
-                        {
-                            var y = 3;
-                            var variable = "";
-                            while(true)
-                            {
-                                variable += bytes[y++];
-                                if (bytes[y] == ']')
-                                    break;
-                            }
-                            int destination = 0;
-                            if(variable[0] == '0' && variable[1] == 'x')
-                            {
-                                destination = Convert.ToInt32(variable, 16);
-                            }
-                            else
-                            {
-                                if (!memoryArgs.ContainsKey(variable))
-                                    MemoryArgError(variable);
-                                destination = memoryArgs[variable];
-                            }
-                            // calculate relative jump
-                            int jmpBytes = destination - offset - 5;
-                            // endianness conversion
-                            byte[] end = BitConverter.GetBytes(jmpBytes).Reverse().ToArray();
-                            bytes = bytes.Replace($"[{variable}]", BitConverter.ToInt32(end, 0).ToString("x")).ToUpper();
-                            // https://github.com/ghost2238/sfall-asm/issues/3#issuecomment-588108479
-                            // pad address to avoid corrupted byte string
-                            if (bytes.Length < 10)
-                                bytes = bytes.PadRight(10, '0'); 
-                        }
-                    }
-
-                    if (runMode == RunMode.Memory)
-                    {
-                        var @byte = Convert.ToByte($"{bytes[i]}{bytes[i + 1]}", 16);
-                        memorybytes.Add(new MemoryPatch()
-                        {
-                            data = new byte[] { @byte },
-                            offset = offset
-                        });
-                    }
-                    else
-                    {
-                        string bytesString = "";
-                        int writeSize = 0;
-
-                        if(ssl.Pack && i + 8 <= bytes.Length)
-                            writeSize = 4;
-                        else if(ssl.Pack && i + 4 <= bytes.Length)
-                            writeSize = 2;
-                        else
-                            writeSize = 1;
-
-                        for(int w=0, b=i; w<writeSize; w++)
-                        {
-                            bytesString = $"{bytes[b++]}{bytes[b++]}{bytesString}";
-                        }
-
-                        ssl.AddWrite(writeSize, offset, Convert.ToInt32(bytesString, 16), i == 0 ? spl[2].Trim() : "");
-
-                        i += writeSize * 2 - 2;
-                        offset += writeSize - 1;
-                    }
-
-                    offset++;
-                    lastOffset = offset;
-                }
-            }
-
-            if (runMode == RunMode.Memory)
-            {
-                var ptr = OpenProcess(0x1F0FFF, IntPtr.Zero, new IntPtr(fallout2.Id));
-                foreach (var patch in memorybytes)
-                {
-                    WriteProcessMemory(ptr, (IntPtr)patch.offset, patch.data, patch.data.Length, out IntPtr _);
-                }
-            }
-            else
-            {
-                foreach(var line in ssl.Get(runMode))
-                {
-                    Console.WriteLine(line);
-                }
-            }
+            ProcessPatch(SafeReadAllLines(args[0]), runMode, ssl, memoryArgs);
         }
     }
 }

@@ -861,7 +861,11 @@ namespace sfall_asm
                 }
             }
 
-            ProcessPatch(SafeReadAllLines(args[0]), runMode, ssl, memoryArgs);
+            var lines = SafeReadAllLines(args[0]);
+            if (lines == null)
+                Environment.Exit(1);
+
+            ProcessPatch(lines, runMode, ssl, memoryArgs);
         }
     }
 }

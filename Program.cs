@@ -917,8 +917,6 @@ namespace sfall_asm
                 Environment.Exit(1);
 
             ProcessPatch(lines, runMode, ssl, memoryArgs);
-
-            Console.ReadKey();
         }
     }
 }

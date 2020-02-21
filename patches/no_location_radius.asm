@@ -2,6 +2,9 @@
 /// No radius when a location is revealed on the worldmap
 /// Modifies sfall code
 
+//! BODY !//
+//! SSL !//
+debug("Writing location_discover_radius patch to [patch].");
 //! ASM !//
 [patch]  | 60               | pushad
 00000000 | 2EA1 70464C00    | mov eax,cs:[4C4670]
@@ -22,3 +25,6 @@
 00000000 | 83C4 04          | add esp,4
 00000000 | 61               | popad
 00000000 | C3               | ret
+//! SSL !//
+call_offset_v0([patch]);
+debug("Done.");

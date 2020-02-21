@@ -45,6 +45,13 @@ namespace sfall_asm
             Memory
         }
 
+        enum ParseMode
+        {
+            Asm,
+            SSL,
+            Macro // sfall-asm macros
+        }
+
         class Fallout2
         {
             private Process fallout2 = null;
@@ -238,7 +245,8 @@ namespace sfall_asm
                 write_byte,
                 write_short,
                 write_int,
-                comment
+                comment,
+                code // custom code
             };
 
             protected class Line
@@ -246,6 +254,7 @@ namespace sfall_asm
                 public LineType Type;
                 public int Address;
                 public int Value;
+                public string Code;
                 public string Comment;
 
                 public bool RFall;
@@ -273,6 +282,16 @@ namespace sfall_asm
 
                         return result;
                     }
+                }
+
+                public Line(string code)
+                {
+                    Type = LineType.code;
+                    Code = code;
+                    Address = 0;
+                    Value = 0;
+                    Comment = "";
+                    RFall = HRP = false;
                 }
 
                 public Line(LineType type, int address, int value, string comment = "")
@@ -317,6 +336,11 @@ namespace sfall_asm
                     Lines.Add(line);
                     LastLine = Lines.Last();
                 }
+            }
+
+            public void AddCustomCode(string code)
+            {
+                Lines.Add(new Line(code));
             }
 
             public void AddWrite(int size, int address, int value, string comment = "")
@@ -611,6 +635,8 @@ namespace sfall_asm
                     }
                     else if(line.Type == LineType.comment)
                         resultmp += comment(line.Comment);
+                    else if(line.Type == LineType.code)
+                        resultmp += line.Code;
 
                     if(mode == RunMode.Macro)
                     {
@@ -654,12 +680,14 @@ namespace sfall_asm
             var reMeta = new Regex(@"^//![\t ]+([A-Za-z0-9]+)[\t ]+(.+)$");
             var reInfo = new Regex(@"^///[\t ]+(.+)$");
             var reAddr = new Regex(@"^[\t ]*(|\$[\+\-][A-Fa-f0-9]+[\t ]+|\$[\t ]+[=]+>[\t ]+)([A-Fa-f0-9]+)");
-            bool asmStart = false;
+            bool bodyStart = false;
 
             Match match;
-            foreach (var line in lines)
+            ParseMode mode = ParseMode.Asm;
+            for(int i=0;i<lines.Count;i++)
             {
-                // find additional patch configuration
+                var line = lines[i];
+                // find additional patch configuration or mode switches
                 match = reMeta.Match(line);
                 if (match.Success)
                 {
@@ -667,11 +695,17 @@ namespace sfall_asm
                     string val = match.Groups[2].Value.Trim();
 
                     // changes "///" behavior to include comment inside macro/procedure body
-                    if (var == "ASM")
-                        asmStart = true;
+                    if (var == "BODY")
+                        bodyStart = true;
                     // sets macro/procedure name
                     else if (var == "NAME")
                         ssl.Name = val;
+                    else if (var == "SSL")
+                        mode = ParseMode.SSL;
+                    else if (var == "MACRO")
+                        mode = ParseMode.Macro;
+                    else if (var == "ASM")
+                        mode = ParseMode.Asm;
 
                     continue;
                 }
@@ -680,7 +714,7 @@ namespace sfall_asm
                 match = reInfo.Match(line);
                 if (match.Success)
                 {
-                    if (!asmStart)
+                    if (!bodyStart)
                         ssl.AddInfo(match.Groups[1].Value.Trim());
                     else
                         ssl.AddComment(match.Groups[1].Value.Trim());
@@ -691,74 +725,91 @@ namespace sfall_asm
                 if (line.Length >= 2 && line[0] == '/' && line[1] == '/')
                     continue;
 
-                if (!line.Contains('|'))
-                    continue;
-
-                var spl = line.Split('|');
-                if (spl.Length < 3)
-                    continue;
-
-                // extract address, in case first column contains detailed address info and/or label
-                match = reAddr.Match(line);
-                if (match.Success)
-                    spl[0] = match.Groups[2].Value;
-                else // might be a variable also, [memory_var]
+                if (mode == ParseMode.Asm)
                 {
-                    // extract and resolve it
-                    if (spl[0].Count(x => x == '[') == 1 && spl[0].Count(x => x == ']') == 1)
-                        spl[0] = memoryArgs.ResolveAddress(spl[0], out _).ToString("x");
-                }
+                    if (!line.Contains('|'))
+                        continue;
 
-                if (spl[0].Length == 0)
-                    continue;
+                    var spl = line.Split('|');
+                    if (spl.Length < 3)
+                        continue;
 
-                // changes "///" behavior to include comment inside macro/procedure body
-                asmStart = true;
-
-                var offset = Convert.ToInt32(spl[0].Trim(), 16);
-                if (offset == 0)
-                    offset = lastOffset;
-
-                var bytes = new ByteString(spl[1]);
-                bool opLine = true;
-                while (!bytes.EOF)
-                {
-                    // instructions which supports using absolute->rel addressing or memory variable
-                    // https://github.com/ghost2238/sfall-asm/issues/3
-                    // this only works for 32-bit, if we are in 16-bit mode it won't work
-                    // but since we don't care about that at the moment it should be fine.
-                    if ((bytes.PeekByte() == 0xE9) || (bytes.PeekByte() == 0xE8))
+                    // extract address, in case first column contains detailed address info and/or label
+                    match = reAddr.Match(line);
+                    if (match.Success)
+                        spl[0] = match.Groups[2].Value;
+                    else // might be a variable also, [memory_var]
                     {
-                        if (bytes.PeekChar(2) == '[')
-                            bytes.ResolveMemoryArg(memoryArgs, offset);
+                        // extract and resolve it
+                        if (spl[0].Count(x => x == '[') == 1 && spl[0].Count(x => x == ']') == 1)
+                            spl[0] = memoryArgs.ResolveAddress(spl[0], out _).ToString("x");
                     }
 
-                    if (runMode == RunMode.Memory)
+                    if (spl[0].Length == 0)
+                        continue;
+
+                    // changes "///" behavior to include comment inside macro/procedure body
+                    bodyStart = true;
+
+                    var offset = Convert.ToInt32(spl[0].Trim(), 16);
+                    if (offset == 0)
+                        offset = lastOffset;
+
+                    var bytes = new ByteString(spl[1]);
+                    bool opLine = true;
+                    while (!bytes.EOF)
                     {
-                        memorybytes.Add(new MemoryPatch()
+                        // instructions which supports using absolute->rel addressing or memory variable
+                        // https://github.com/ghost2238/sfall-asm/issues/3
+                        // this only works for 32-bit, if we are in 16-bit mode it won't work
+                        // but since we don't care about that at the moment it should be fine.
+                        if ((bytes.PeekByte() == 0xE9) || (bytes.PeekByte() == 0xE8))
                         {
-                            data = new byte[] { bytes.ReadByte() },
-                            offset = offset
-                        });
-                    }
-                    else
-                    {
-                        int writeSize = 0;
-                        if (ssl.Pack && bytes.HasBytesLeft(4))
-                            writeSize = 4;
-                        else if (ssl.Pack && bytes.HasBytesLeft(2))
-                            writeSize = 2;
+                            if (bytes.PeekChar(2) == '[')
+                                bytes.ResolveMemoryArg(memoryArgs, offset);
+                        }
+
+                        if (runMode == RunMode.Memory)
+                        {
+                            memorybytes.Add(new MemoryPatch()
+                            {
+                                data = new byte[] { bytes.ReadByte() },
+                                offset = offset
+                            });
+                        }
                         else
-                            writeSize = 1;
+                        {
+                            int writeSize = 0;
+                            if (ssl.Pack && bytes.HasBytesLeft(4))
+                                writeSize = 4;
+                            else if (ssl.Pack && bytes.HasBytesLeft(2))
+                                writeSize = 2;
+                            else
+                                writeSize = 1;
 
-                        ssl.AddWrite(writeSize, offset, bytes.AsInt(writeSize), opLine ? spl[2].Trim() : "");
-                        // this is to decide if comment should be written or not.
-                        opLine = false;
-                        offset += writeSize - 1;
+                            ssl.AddWrite(writeSize, offset, bytes.AsInt(writeSize), opLine ? spl[2].Trim() : "");
+                            // this is to decide if comment should be written or not.
+                            opLine = false;
+                            offset += writeSize - 1;
+                        }
+
+                        offset++;
+                        lastOffset = offset;
                     }
-
-                    offset++;
-                    lastOffset = offset;
+                }
+                else if(mode == ParseMode.SSL)
+                {
+                    // this needs to be more robust probably.
+                    int idx = 0;
+                    do
+                    {
+                        idx = line.IndexOf('[', idx);
+                        if (idx == -1)
+                            break;
+                        int value = memoryArgs.ResolveAddress(line, out string literal);
+                        line = line.Replace($"[{literal}]", "0x"+value.ToString("x"));
+                    } while (idx != -1);
+                    ssl.AddCustomCode(line);
                 }
             }
 
@@ -866,6 +917,8 @@ namespace sfall_asm
                 Environment.Exit(1);
 
             ProcessPatch(lines, runMode, ssl, memoryArgs);
+
+            Console.ReadKey();
         }
     }
 }

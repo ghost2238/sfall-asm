@@ -204,7 +204,6 @@ namespace sfall_asm
 
             var patch = new Patch(lines, runMode, ssl, memoryArgs);
             patch.Run();
-            Console.ReadKey();
         }
     }
 }

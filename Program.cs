@@ -44,11 +44,14 @@ namespace sfall_asm
         public class MemoryArgs
         {
             private Dictionary<string, int> vars = new Dictionary<string, int>();
+
             public int this[string idx]
             {
                 get => vars[idx];
                 set { vars[idx] = value; }
             }
+
+            public string this[int address] => vars.FirstOrDefault(x => x.Value == address).Key;
 
             public void FromArgString(string arg)
             {
@@ -110,6 +113,7 @@ namespace sfall_asm
             }
 
             public bool IsDefined(string var) => vars.ContainsKey(var);
+            public bool IsDefined(int val) => vars.ContainsValue(val);
         }
 
         static List<string> SafeReadAllLines(string file)
@@ -165,50 +169,70 @@ namespace sfall_asm
             var memoryArgs = new MemoryArgs();
             bool readKey = false;
             RunMode runMode = RunMode.Macro;
-            SSLCode ssl = new SSLCode("VOODOO");
-            if(args.Length>1)
+            SSLCode protossl = new SSLCode("VOODOO");
+            List<string> patchfiles = new List<string>();
+
+            foreach (var a in args)
             {
-                foreach (var a in args)
+                // run mode
+                if (a == "--macro")
+                    runMode = RunMode.Macro;
+                else if (a == "--procedure")
+                    runMode = RunMode.Procedure;
+                else if (a == "--memory")
+                    runMode = RunMode.Memory;
+                // ssl generation
+                else if (a == "--no-pack")
+                    protossl.Pack = false;
+                else if (a == "--no-lower")
+                    protossl.Lower = false;
+                else if (a == "--no-macro-guard")
+                    protossl.MacroGuard = false;
+                else if (a == "--rfall")
+                    protossl.RFall = true;
+                else if (a == "-r")
+                    readKey = true;
+                else if (a.StartsWith("--memory-args="))
                 {
-                    // run mode
-                    if (a == "--macro")
-                        runMode = RunMode.Macro;
-                    else if (a == "--procedure")
-                        runMode = RunMode.Procedure;
-                    else if (a == "--memory")
-                        runMode = RunMode.Memory;
-                    // ssl generation
-                    else if (a == "--no-pack")
-                        ssl.Pack = false;
-                    else if (a == "--no-lower")
-                        ssl.Lower = false;
-                    else if (a == "--no-macro-guard")
-                        ssl.MacroGuard = false;
-                    else if (a == "--rfall")
-                        ssl.RFall = true;
-                    else if (a == "-r")
-                        readKey = true;
-                    else if (a.StartsWith("--memory-args="))
-                    {
-                        memoryArgs.FromArgString(a.Replace("--memory-args=", ""));
-                    }
-                    else
-                    {
-                        if (a != args[0])
-                        {
-                            Console.WriteLine($"'{a}' is not a valid argument.");
-                            Environment.Exit(1);
-                        }
-                    }
+                    memoryArgs.FromArgString(a.Replace("--memory-args=", ""));
+                }
+                else
+                {
+                    patchfiles.Add(a);
+                    //if (a != args[(0])
+                    //{
+                    //    Console.WriteLine($"'{a}' is not a valid argument.");
+                    //    Environment.Exit(1);
+                    //}
                 }
             }
 
-            var lines = SafeReadAllLines(args[0]);
-            if (lines == null)
-                Environment.Exit(1);
+            bool multipatch = patchfiles.Count > 1;
 
-            var patch = new Patch(lines, runMode, ssl, memoryArgs);
-            patch.Run();
+            foreach(string patchfile in patchfiles)
+            {
+                SSLCode ssl = new SSLCode(protossl);
+
+                var lines = SafeReadAllLines(patchfile);
+                if (lines == null)
+                    Environment.Exit(1);
+
+                var patch = new Patch(lines, runMode, ssl, memoryArgs);
+                patch.Run();
+
+                if(!multipatch)
+                    break;
+
+                foreach(KeyValuePair<int,int> group in ssl.GetWriteGroups())
+                {
+                    if(memoryArgs.IsDefined(group.Key))
+                    {
+                        memoryArgs[memoryArgs[group.Key]] = group.Value;
+                    }
+                }
+
+                Console.WriteLine();
+            }
 
             if (readKey)
                 Console.ReadKey();

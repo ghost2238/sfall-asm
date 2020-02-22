@@ -78,7 +78,7 @@ namespace sfall_asm
             }
         };
 
-        public readonly string NamePrefix;
+        public readonly string NamePrefix = "";
         public string Name = "";
         public bool Lower = true;
         public bool MacroGuard = true;
@@ -93,6 +93,27 @@ namespace sfall_asm
         public SSLCode(string namePrefix = "")
         {
             NamePrefix = namePrefix;
+        }
+
+        public SSLCode(SSLCode other)
+        {
+            NamePrefix = other.NamePrefix;
+
+            /*
+            Name = other.Name;
+            */
+
+            Lower = other.Lower;
+            MacroGuard = other.MacroGuard;
+            Pack = other.Pack;
+            RFall = other.RFall;
+
+            /*
+            Info = other.Info;
+            Lines = other.Lines;
+            LastLine = other.LastLine;
+            LastWriteLine = other.LastWriteLine;
+            */
         }
 
         public void AddInfo(string info)
@@ -303,6 +324,12 @@ namespace sfall_asm
                     break;
             }
 
+            return result;
+        }
+
+        // should be called only after preprocessing
+        public SortedDictionary<int,int> GetWriteGroups()
+        {
             SortedDictionary<int,int> groups = new SortedDictionary<int,int>();
             int lastGroup = -1;
 
@@ -334,12 +361,7 @@ namespace sfall_asm
                     groups[lastGroup] += size;
             }
 
-            foreach(KeyValuePair<int,int> group in groups)
-            {
-                result.Add($"//> {group.Key.ToString("x")} -> {group.Value - group.Key}");
-            }
-
-            return result;
+            return groups;
         }
 
         public List<string> GetBody(RunMode mode)

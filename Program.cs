@@ -1,88 +1,29 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices;
-using System.Text.RegularExpressions;
 
 namespace sfall_asm
 {
-    class Program
+    public class Program
     {
-        [DllImport("kernel32", SetLastError = true)]
-        public static extern IntPtr OpenProcess(
-                    int dwDesiredAccess,
-                    IntPtr bInheritHandle,
-                    IntPtr dwProcessId
-                    );
-
-        [DllImport("kernel32.dll")]
-        public static extern int ReadProcessMemory(
-            IntPtr hProcess,
-            int lpBase,
-            ref byte lpBuffer,
-            int nSize,
-            int lpNumberOfBytesRead
-        );
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        public static extern bool WriteProcessMemory(
-          IntPtr hProcess,
-          IntPtr lpBaseAddress,
-          byte[] lpBuffer,
-          Int32 nSize,
-          out IntPtr lpNumberOfBytesWritten);
-
-        [DllImport("kernel32.dll")]
-         static extern bool VirtualProtectEx(IntPtr hProcess, IntPtr lpAddress,
-        UIntPtr dwSize, uint flNewProtect, out uint lpflOldProtect);
-
-        enum RunMode
+        public enum RunMode
         {
-            Macro,
-            Procedure,
-            Memory
+            Macro,      // Preprocessor macro
+            Procedure,  // Inline procedure
+            Memory      // Write the code directly into a running instance of Fallout2.exe
         }
 
-        enum ParseMode
+        public enum ParseMode
         {
-            Asm,
-            SSL,
-            Macro // sfall-asm macros
-        }
-
-        class Fallout2
-        {
-            private Process fallout2 = null;
-
-            public Fallout2()
-            {
-                var pids = Process.GetProcessesByName("Fallout2");
-                if (pids.Length == 0)
-                {
-                    Console.WriteLine("Unable to find Fallout2.exe process");
-                    Environment.Exit(1);
-                }
-                fallout2 = pids[0];
-            }
-
-            public void WriteMemoryPatches(List<MemoryPatch> patches)
-            {
-                var ptr = OpenProcess(0x1F0FFF, IntPtr.Zero, new IntPtr(fallout2.Id));
-                foreach (var patch in patches)
-                    WriteProcessMemory(ptr, (IntPtr)patch.offset, patch.data, patch.data.Length, out IntPtr _);
-            }
-        }
-
-        class MemoryPatch
-        {
-            public byte[] data;
-            public int offset;
+            Asm,  // Assembler byte code.
+            SSL,  // Fallout 2 script code.
+            Macro // sfall-asm macros.
         }
 
         public static class Asm
         {
+            // Swap from big-endian to little-endian (or back, if already swapped).
             public static int SwapEndian(int num)
             {
                 byte[] end = BitConverter.GetBytes(num).Reverse().ToArray();
@@ -95,85 +36,12 @@ namespace sfall_asm
                 return BitConverter.ToInt16(end, 0);
             }
 
-            // Calculate the jump distance for rel jump/call
+            // Calculate the jump distance for relative jump/call.
             public static int CalculateRelJump32(int from, int to) => SwapEndian(to - from - 5);
         }
 
-        // Bytestring which can also contain some random meta stuff.
-        class ByteString
-        {
-            private string str;
-            public int offset;
-            public ByteString(string str)
-            {
-                this.str = str.Replace(" ", "");
-                this.offset = 0;
-            }
-
-            public char PeekChar(int pos)
-            {
-                if (offset + pos >= str.Length)
-                    return '\0';
-                return str[offset + pos];
-            }
-            public string ReadChars(int num)
-            {
-                var read = str.Substring(offset, num);
-                offset += num;
-                return read;
-            }
-            public byte ReadByte()
-            {
-                var b = PeekByte();
-                offset += 2;
-                return b;
-            }
-            public byte PeekByte()
-            {
-                if (EOF) 
-                    return 0;
-                // This might not be the best solution for https://github.com/ghost2238/sfall-asm/issues/4
-                if (PeekChar(0) == ':')
-                    offset++;
-
-                return Convert.ToByte($"{PeekChar(0)}{PeekChar(1)}", 16);
-            }
-            public bool HasBytesLeft(int numBytes) => offset + numBytes * 2 <= str.Length;
-            public int AsInt(int numBytes) 
-            {
-                if (numBytes == 1)
-                    return (int)ReadByte();
-                else if (numBytes == 2)
-                    return (int)Asm.SwapEndian(Convert.ToInt16(ReadChars(numBytes * 2), 16));
-                else if (numBytes == 3)
-                    throw new Exception("Can't read 3 bytes.");
-                else if (numBytes == 4)
-                    return Asm.SwapEndian(Convert.ToInt32(ReadChars(numBytes * 2), 16));
-                else
-                    throw new Exception("Can't read more than 4 bytes.");
-            }
-
-
-            public void ResolveMemoryArg(MemoryArgs args, int currentOffset)
-            {
-                int addr = args.ResolveAddress(str.Substring(offset+1), out string resolvedLiteral);
-                int jumpBytes = Asm.CalculateRelJump32(currentOffset, addr);
-                var litBrackets = $"[{resolvedLiteral}]";
-
-                var jumpBytesStr = jumpBytes.ToString("x");
-                // https://github.com/ghost2238/sfall-asm/issues/3#issuecomment-588108479
-                // pad address to avoid corrupted byte string
-                if (jumpBytesStr.Length < 8)
-                    jumpBytesStr = jumpBytesStr.PadRight(8, '0');
-                str = str.Replace(litBrackets, jumpBytesStr).ToUpper();
-
-            }
-
-            public bool EOF => offset >= str.Length;
-        }
-
-        // Used to resolve [some_var] in the address field or in rel instructions.
-        class MemoryArgs
+        // Used to resolve [some_var] in the address field or in relative instructions.
+        public class MemoryArgs
         {
             private Dictionary<string, int> vars = new Dictionary<string, int>();
             public int this[string idx]
@@ -213,6 +81,16 @@ namespace sfall_asm
                 }
             }
 
+            private void MemoryArgError(string var)
+            {
+                Console.WriteLine($"Unable to resolve the variable [{var}], did you specify the correct --memory-args?");
+                Environment.Exit(1);
+            }
+
+            // Resolves a memory address identifier which uses the [identifier] syntax.
+            // There are two variants:
+            // 1. Address literals, useful for specifying the absolute address next to instructions relying on relative addresses.
+            // 2. Variables, which are set via the CLI argument --memory-args.
             public int ResolveAddress(string str, out string resolvedLiteral)
             {
                 var startIdx = str.IndexOf('[');
@@ -232,598 +110,6 @@ namespace sfall_asm
             }
 
             public bool IsDefined(string var) => vars.ContainsKey(var);
-        }
-
-        class SSLCode
-        {
-            // NOTE: enum names are used as-is in generated code (except 'comment')
-            protected enum LineType
-            {
-                begin,
-                end,
-                noop,
-                write_byte,
-                write_short,
-                write_int,
-                comment,
-                code // custom code
-            };
-
-            protected class Line
-            {
-                public LineType Type;
-                public int Address;
-                public int Value;
-                public string Code;
-                public string Comment;
-
-                public bool RFall;
-                public bool HRP;
-
-                public string HexFormat;
-
-                public string FunctionString => (RFall ? "r_" : "") + Enum.GetName(typeof(LineType), Type);
-                public string AddressString => (HRP ? "r_hrp_offset(" : "") + "0x" + Address.ToString(HexFormat) + (HRP ? ")" : "");
-                public string ValueString
-                {
-                    get
-                    {
-                        string result = "";
-
-                        if(Type == LineType.write_byte)
-                            result = ((byte)Value).ToString($"{HexFormat}2");
-                        else if(Type == LineType.write_short)
-                            result = ((short)Value).ToString($"{HexFormat}4");
-                        else if(Type == LineType.write_int)
-                            result = Value.ToString($"{HexFormat}8");
-
-                        if(result.Length > 0)
-                            result = $"0x{result}";
-
-                        return result;
-                    }
-                }
-
-                public Line(string code)
-                {
-                    Type = LineType.code;
-                    Code = code;
-                    Address = 0;
-                    Value = 0;
-                    Comment = "";
-                    RFall = HRP = false;
-                }
-
-                public Line(LineType type, int address, int value, string comment = "")
-                {
-                    Type = type;
-                    Address = address;
-                    Value = value;
-                    Comment = comment;
-
-                    RFall = HRP = false;
-                }
-            };
-
-            public readonly string NamePrefix;
-            public string Name = "";
-            public bool Lower = true;
-            public bool MacroGuard = true;
-            public bool Pack = true;
-            public bool RFall = false;
-
-            protected List<string> Info = new List<string>();
-            protected List<Line> Lines = new List<Line>();
-            protected Line LastLine;
-            protected Line LastWriteLine;
-
-            public SSLCode(string namePrefix = "")
-            {
-                NamePrefix = namePrefix;
-            }
-
-            public void AddInfo(string info)
-            {
-                Info.Add(info);
-            }
-
-            protected void AddLine(Line line, bool first = false)
-            {
-                if(first)
-                    Lines.Insert(0, line);
-                else
-                {
-                    Lines.Add(line);
-                    LastLine = Lines.Last();
-                }
-            }
-
-            public void AddCustomCode(string code)
-            {
-                Lines.Add(new Line(code));
-            }
-
-            public void AddWrite(int size, int address, int value, string comment = "")
-            {
-                LineType type;
-
-                if(size == 4)
-                    type = LineType.write_int;
-                else if(size == 2)
-                    type = LineType.write_short;
-                else if(size == 1)
-                    type = LineType.write_byte;
-                else
-                    throw new ArgumentOutOfRangeException(nameof(size));
-
-                AddLine(new Line(type, address, value, comment));
-                LastWriteLine = LastLine;
-
-                // vanilla sfall cannot write outside Fallout2.exe memory currently,
-                // after preparing all lines, code is tweaked to use less restricted rfall implementation
-                // see sfall/Modules/Scripting/Handlers/Memory.cpp -- START_VALID_ADDR, END_VALID_ADDR
-                if(address < 0x410000 || address > 0x6B403F)
-                    LastLine.RFall = true;
-
-                // f2_res.dll base address might change in some conditions
-                // make sure macro/procedure is writing at correct position by tweaking address same way as sfall does
-                // see sfall/main.cpp -- HRPAddress()
-                if(address >= 0x10000000 && address <= 0x10077000)
-                    LastLine.RFall = LastLine.HRP = true;
-
-                // add r_ prefix to ALL lines if at least one write uses rfall function or --rfall is used
-                // in first case it's technically not needed to use r_write_* if other address(es) are inside sfall limits,
-                // but mixing limited and non-limited writing can make macro/procedure useless and/or dangerous
-                if(!LastLine.RFall && this.RFall)
-                    LastLine.RFall = true;
-                else if(LastLine.RFall && !this.RFall)
-                {
-                    foreach(Line line in Lines)
-                    {
-                        line.RFall = true;
-                    }
-
-                    this.RFall = true;
-                }
-            }
-
-            public void AddComment(string comment)
-            {
-                AddLine(new Line(LineType.comment, 0, 0, comment));
-            }
-
-            protected void PreProcessNOP()
-            {
-                bool isNOP8(int idx) => Lines[idx].Type == LineType.write_byte && Lines[idx].Value == 0x90 && Lines[idx].Comment == "nop";
-                bool isNOP16(int idx) => Lines[idx].Type == LineType.write_short && Lines[idx].Value == 0x9090  && Lines[idx].Comment == "nop";
-                bool isNOP32(int idx) => Lines[idx].Type == LineType.write_int && (uint)Lines[idx].Value == 0x90909090  && Lines[idx].Comment == "nop";
-
-                for(int l=0, len=Lines.Count; l<len; l++)
-                {
-                    // lower amount of lines generated for duplicated NOP instructions
-                    if(Pack)
-                    {
-                        // byte, byte, byte, byte -> int
-                        if(l + 4 <= len && isNOP8(l) && isNOP8(l+1) && isNOP8(l+2) && isNOP8(l+3))
-                        {
-                            Lines[l].Type = LineType.write_int;
-                            Lines[l].Value = unchecked((int)0x90909090);
-
-                            Lines.RemoveAt(l+1);
-                            Lines.RemoveAt(l+1);
-                            Lines.RemoveAt(l+1);
-
-                            len -= 3;
-                        }
-                        // short, short -> int
-                        else if(l + 2 <= len && isNOP16(l) && isNOP16(l+1))
-                        {
-                            Lines[l].Type = LineType.write_int;
-                            Lines[l].Value = unchecked((int)0x90909090);
-
-                            Lines.RemoveAt(l+1);
-
-                            len--;
-                        }
-                        // byte, byte -> short
-                        else if(l + 2 <= len && isNOP8(l) && isNOP8(l+1))
-                        {
-                            Lines[l].Type = LineType.write_short;
-                            Lines[l].Value = 0x9090;
-
-                            Lines.RemoveAt(l+1);
-
-                            len--;
-                        }
-                    }
-
-                    if(isNOP32(l))
-                        Lines[l].Comment = "nop; nop; nop; nop";
-                    else if(isNOP16(l))
-                        Lines[l].Comment = "nop; nop";
-                }
-            }
-
-            protected void PreProcessMacro()
-            {
-                if(MacroGuard)
-                {
-                    int writeCount = 0;
-                    foreach(Line line in Lines)
-                    {
-                        switch(line.Type)
-                        {
-                            case LineType.write_byte:
-                            case LineType.write_short:
-                            case LineType.write_int:
-                                writeCount++;
-                                break;
-                        }
-
-                        if(writeCount >= 2)
-                            break;
-                    }
-
-                    if(writeCount >= 2)
-                    {
-                        AddLine(new Line(LineType.begin, 0, 0), true);
-                        AddLine(new Line(LineType.end, 0, 0));
-                        AddLine(new Line(LineType.noop, 0, 0));
-                    }
-                }
-            }
-
-            protected void PreProcessProcedure()
-            {
-                AddLine(new Line(LineType.begin, 0, 0), true);
-                AddLine(new Line(LineType.end, 0, 0));
-            }
-
-            public void PreProcess(RunMode mode)
-            {
-                PreProcessNOP();
-
-                if(mode == RunMode.Macro)
-                    PreProcessMacro();
-                else if(mode == RunMode.Procedure)
-                    PreProcessProcedure();
-            }
-
-            public string GetName()
-            {
-                string result = "";
-
-                if(NamePrefix.Length > 0)
-                    result += NamePrefix + "_";
-
-                if(Name.Length > 0)
-                    result += Name;
-
-                return result;
-            }
-
-            public List<string> GetInfo()
-            {
-                List<string> result = new List<string>();
-
-                foreach(string info in Info)
-                {
-                    result.Add($"// {info}");
-                }
-
-                bool hrp = false, rfall = false;
-                foreach(var line in Lines)
-                {
-                    if(!hrp && line.HRP)
-                    {
-                        hrp = true;
-                        result.Add("// hrp required");
-                    }
-
-                    if(!rfall && line.RFall)
-                    {
-                        rfall = true;
-                        result.Add("// rfall required");
-                    }
-
-                    if(rfall && hrp)
-                        break;
-                }
-
-                return result;
-            }
-
-            public List<string> GetBody(RunMode mode)
-            {
-                if(mode != RunMode.Macro && mode != RunMode.Procedure)
-                    throw new InvalidOperationException("You're kidding, right?");
-
-                List<string> result = new List<string>();
-                string resultmp;
-
-                int writeCount = 0;
-
-                // collect maximum length of each subelement
-                int maxFunctionLength = 0, maxAddressLength = 0, maxValueLength = 0, maxCommentLength = 0;
-                int maxRawWriteMacroLength, maxRawWriteProcedureLength = 0, maxRawCommentLength = 0;
-                int maxRawLength = 0;
-
-                foreach(Line line in Lines)
-                {
-                    if(line.Type == LineType.write_byte || line.Type == LineType.write_short || line.Type == LineType.write_int)
-                    {
-                        writeCount++;
-                        line.HexFormat = Lower ? "x" : "X";
-
-                        maxFunctionLength = Math.Max(maxFunctionLength, line.FunctionString.Length);
-                        maxAddressLength = Math.Max(maxAddressLength, line.AddressString.Length);
-                        maxValueLength = Math.Max(maxValueLength,line.ValueString.Length);
-                        maxCommentLength = Math.Max(maxCommentLength, line.Comment.Length);
-                    }
-                    else if(line.Type == LineType.comment)
-                    {
-                        maxRawCommentLength = Math.Max(maxRawCommentLength, line.Comment.Length);
-                    }
-                }
-                //                       write               (   0x1207             ,   _   0x1337           )   ;   _   /   *   _   text               _   *   /
-                maxRawWriteMacroLength = maxFunctionLength + 1 + maxAddressLength + 1 + 1 + maxValueLength + 1 + 1 + 1 + 1 + 1 + 1 + maxCommentLength + 1 + 1 + 1;
-                //                           write               (   0x1207             ,   _   0x1337           )   ;   _   /   /   _   text
-                maxRawWriteProcedureLength = maxFunctionLength + 1 + maxAddressLength + 1 + 1 + maxValueLength + 1 + 1 + 1 + 1 + 1 + 1 + maxCommentLength;
-                //                    /   *   _   text                 _   *   /
-                maxRawCommentLength = 1 + 1 + 1 + maxRawCommentLength+ 1 + 1 + 1;
-
-                if(mode == RunMode.Macro)
-                    maxRawLength = Math.Max(maxRawWriteMacroLength, maxRawCommentLength);
-                else if(mode == RunMode.Procedure)
-                    maxRawLength = Math.Max(maxRawWriteProcedureLength, maxRawCommentLength);
-
-                string prefix = "";
-                if(mode == RunMode.Macro)
-                {
-                    prefix = new string(' ', 8 + (NamePrefix.Length > 0 ? NamePrefix.Length + 1 : 0));
-
-                    result.Add($"#define {GetName()} \\");
-                }
-                else if(mode == RunMode.Procedure)
-                {
-                    prefix = new string(' ', 3); // default SFallEditor setting... yeah. i know.
-
-                    result.Add($"inline procedure {GetName()}");
-                }
-
-                foreach(var line in Lines)
-                {
-                    resultmp = prefix;
-
-                    string comment(string value) => (mode == RunMode.Macro ? $"/* {value} */" : $"// {value}");
-
-                    if(line.Type == LineType.begin || line.Type == LineType.end || line.Type == LineType.noop)
-                    {
-                        bool rfall = line.RFall;
-                        line.RFall = false;
-
-                        // align begin/end to right when generating procedure
-                        if(mode == RunMode.Procedure)
-                            resultmp = " ";
-
-                        resultmp = resultmp.Remove(resultmp.Length - 1);
-                        resultmp += line.FunctionString.PadRight(maxRawLength);
-
-                        if(line.Type == LineType.noop && line != LastLine)
-                            resultmp += ";";
-
-                        line.RFall = rfall;
-                    }
-                    else if(line.Type == LineType.write_byte || line.Type == LineType.write_short || line.Type == LineType.write_int)
-                    {
-                        string semicolon = ";";
-
-                        if(mode == RunMode.Macro)
-                        {
-                            if(!MacroGuard && line == LastWriteLine)
-                                semicolon = " ";
-                            else if(writeCount == 1)
-                                semicolon = " ";
-                        }
-
-                        resultmp += line.FunctionString.PadRight(maxFunctionLength);
-                        resultmp += $"({line.AddressString}, ".PadRight(maxAddressLength + 3);
-                        resultmp += $"{line.ValueString}){semicolon} ".PadRight(maxValueLength + 3);
-
-                        if(line.Comment.Length > 0)
-                            resultmp += comment(line.Comment);
-                    }
-                    else if(line.Type == LineType.comment)
-                        resultmp += comment(line.Comment);
-                    else if(line.Type == LineType.code)
-                        resultmp += line.Code;
-
-                    if(mode == RunMode.Macro)
-                    {
-                        // make sure all line types are same length before adding suffix
-                        resultmp = resultmp.PadRight(prefix.Length + maxRawLength);
-
-                        if(line != LastLine)
-                            resultmp += " \\";
-                    }
-
-                    result.Add(resultmp.TrimEnd());
-                }
-
-                return result;
-            }
-
-            public List<string> Get(RunMode mode)
-            {
-                PreProcess(mode);
-
-                List<string> result = new List<string>();
-
-                result.AddRange(GetInfo());
-                result.AddRange(GetBody(mode));
-
-                return result;
-            }
-        }
-
-        static void MemoryArgError(string var)
-        {
-            Console.WriteLine($"Unable to resolve the variable [{var}], did you specify the correct --memory-args?");
-            Environment.Exit(1);
-        }
-
-        static void ProcessPatch(List<string> lines, RunMode runMode, SSLCode ssl, MemoryArgs memoryArgs)
-        {
-            var memorybytes = new List<MemoryPatch>();
-            var lastOffset = 0;
-
-            var reMeta = new Regex(@"^//![\t ]+([A-Za-z0-9]+)[\t ]+(.+)$");
-            var reInfo = new Regex(@"^///[\t ]+(.+)$");
-            var reAddr = new Regex(@"^[\t ]*(|\$[\+\-][A-Fa-f0-9]+[\t ]+|\$[\t ]+[=]+>[\t ]+)([A-Fa-f0-9]+)");
-            bool bodyStart = false;
-
-            Match match;
-            ParseMode mode = ParseMode.Asm;
-            for(int i=0;i<lines.Count;i++)
-            {
-                var line = lines[i];
-                // find additional patch configuration or mode switches
-                match = reMeta.Match(line);
-                if (match.Success)
-                {
-                    string var = match.Groups[1].Value.Trim().ToUpper();
-                    string val = match.Groups[2].Value.Trim();
-
-                    // changes "///" behavior to include comment inside macro/procedure body
-                    if (var == "BODY")
-                        bodyStart = true;
-                    // sets macro/procedure name
-                    else if (var == "NAME")
-                        ssl.Name = val;
-                    else if (var == "SSL")
-                        mode = ParseMode.SSL;
-                    else if (var == "MACRO")
-                        mode = ParseMode.Macro;
-                    else if (var == "ASM")
-                        mode = ParseMode.Asm;
-
-                    continue;
-                }
-
-                // find public comments, included in generated macro/procedure code
-                match = reInfo.Match(line);
-                if (match.Success)
-                {
-                    if (!bodyStart)
-                        ssl.AddInfo(match.Groups[1].Value.Trim());
-                    else
-                        ssl.AddComment(match.Groups[1].Value.Trim());
-
-                    continue;
-                }
-
-                if (line.Length >= 2 && line[0] == '/' && line[1] == '/')
-                    continue;
-
-                if (mode == ParseMode.Asm)
-                {
-                    if (!line.Contains('|'))
-                        continue;
-
-                    var spl = line.Split('|');
-                    if (spl.Length < 3)
-                        continue;
-
-                    // extract address, in case first column contains detailed address info and/or label
-                    match = reAddr.Match(line);
-                    if (match.Success)
-                        spl[0] = match.Groups[2].Value;
-                    else // might be a variable also, [memory_var]
-                    {
-                        // extract and resolve it
-                        if (spl[0].Count(x => x == '[') == 1 && spl[0].Count(x => x == ']') == 1)
-                            spl[0] = memoryArgs.ResolveAddress(spl[0], out _).ToString("x");
-                    }
-
-                    if (spl[0].Length == 0)
-                        continue;
-
-                    // changes "///" behavior to include comment inside macro/procedure body
-                    bodyStart = true;
-
-                    var offset = Convert.ToInt32(spl[0].Trim(), 16);
-                    if (offset == 0)
-                        offset = lastOffset;
-
-                    var bytes = new ByteString(spl[1]);
-                    bool opLine = true;
-                    while (!bytes.EOF)
-                    {
-                        // instructions which supports using absolute->rel addressing or memory variable
-                        // https://github.com/ghost2238/sfall-asm/issues/3
-                        // this only works for 32-bit, if we are in 16-bit mode it won't work
-                        // but since we don't care about that at the moment it should be fine.
-                        if ((bytes.PeekByte() == 0xE9) || (bytes.PeekByte() == 0xE8))
-                        {
-                            if (bytes.PeekChar(2) == '[')
-                                bytes.ResolveMemoryArg(memoryArgs, offset);
-                        }
-
-                        if (runMode == RunMode.Memory)
-                        {
-                            memorybytes.Add(new MemoryPatch()
-                            {
-                                data = new byte[] { bytes.ReadByte() },
-                                offset = offset
-                            });
-                        }
-                        else
-                        {
-                            int writeSize = 0;
-                            if (ssl.Pack && bytes.HasBytesLeft(4))
-                                writeSize = 4;
-                            else if (ssl.Pack && bytes.HasBytesLeft(2))
-                                writeSize = 2;
-                            else
-                                writeSize = 1;
-
-                            ssl.AddWrite(writeSize, offset, bytes.AsInt(writeSize), opLine ? spl[2].Trim() : "");
-                            // this is to decide if comment should be written or not.
-                            opLine = false;
-                            offset += writeSize - 1;
-                        }
-
-                        offset++;
-                        lastOffset = offset;
-                    }
-                }
-                else if(mode == ParseMode.SSL)
-                {
-                    // this needs to be more robust probably.
-                    int idx = 0;
-                    do
-                    {
-                        idx = line.IndexOf('[', idx);
-                        if (idx == -1)
-                            break;
-                        int value = memoryArgs.ResolveAddress(line, out string literal);
-                        line = line.Replace($"[{literal}]", "0x"+value.ToString("x"));
-                    } while (idx != -1);
-                    ssl.AddCustomCode(line);
-                }
-            }
-
-            if (runMode == RunMode.Memory)
-            {
-                new Fallout2().WriteMemoryPatches(memorybytes);
-            }
-            else
-            {
-                foreach (var line in ssl.Get(runMode))
-                {
-                    Console.WriteLine(line);
-                }
-            }
         }
 
         static List<string> SafeReadAllLines(string file)
@@ -847,13 +133,13 @@ namespace sfall_asm
 
         static void Main(string[] args)
         {
-            // force english language, for exceptions
-            System.Threading.Thread.CurrentThread.CurrentCulture = System.Globalization.CultureInfo.CreateSpecificCulture("en-US");
+            // Force english language, for exceptions
+            System.Threading.Thread.CurrentThread.CurrentCulture   = System.Globalization.CultureInfo.CreateSpecificCulture("en-US");
             System.Threading.Thread.CurrentThread.CurrentUICulture = System.Threading.Thread.CurrentThread.CurrentCulture;
 
             if (args.Length == 0)
             {
-                Console.WriteLine(System.AppDomain.CurrentDomain.FriendlyName + " [asm_patch] <options...>");
+                Console.WriteLine(AppDomain.CurrentDomain.FriendlyName + " [asm_patch] <options...>");
                 Console.WriteLine();
                 Console.WriteLine("RUN MODE");
                 Console.WriteLine("\t--macro           Generate patch file as preprocessor macro (default)");
@@ -916,7 +202,9 @@ namespace sfall_asm
             if (lines == null)
                 Environment.Exit(1);
 
-            ProcessPatch(lines, runMode, ssl, memoryArgs);
+            var patch = new Patch(lines, runMode, ssl, memoryArgs);
+            patch.Run();
+            Console.ReadKey();
         }
     }
 }

@@ -7,7 +7,7 @@ namespace sfall_asm
 {
     public class SSLCode
     {
-        // NOTE: enum names are used as-is in generated code (except 'comment')
+        // NOTE: enum names are used as-is in generated code (in most cases)
         protected enum LineType
         {
             begin,
@@ -23,6 +23,8 @@ namespace sfall_asm
         protected class Line
         {
             public LineType Type;
+            public bool TypeIsWrite => Type == LineType.write_byte || Type == LineType.write_short || Type == LineType.write_int;
+
             public int Address;
             public int Value;
             public string Code;
@@ -301,6 +303,42 @@ namespace sfall_asm
                     break;
             }
 
+            SortedDictionary<int,int> groups = new SortedDictionary<int,int>();
+            int lastGroup = -1;
+
+            foreach(Line line in Lines)
+            {
+                if(!line.TypeIsWrite)
+                    continue;
+
+                int size = 0;
+                switch(line.Type)
+                {
+                    case LineType.write_int:
+                        size = 4;
+                        break;
+                    case LineType.write_short:
+                        size = 2;
+                        break;
+                    case LineType.write_byte:
+                        size = 1;
+                        break;
+                }
+
+                if(lastGroup < 0 || line.Address != groups[lastGroup])
+                {
+                    groups[line.Address] = line.Address + size;
+                    lastGroup = line.Address;
+                }
+                else
+                    groups[lastGroup] += size;
+            }
+
+            foreach(KeyValuePair<int,int> group in groups)
+            {
+                result.Add($"//> {group.Key.ToString("x")} -> {group.Value - group.Key}");
+            }
+
             return result;
         }
 
@@ -321,7 +359,7 @@ namespace sfall_asm
 
             foreach (Line line in Lines)
             {
-                if (line.Type == LineType.write_byte || line.Type == LineType.write_short || line.Type == LineType.write_int)
+                if (line.TypeIsWrite)
                 {
                     writeCount++;
                     line.HexFormat = Lower ? "x" : "X";
@@ -385,7 +423,7 @@ namespace sfall_asm
 
                     line.RFall = rfall;
                 }
-                else if (line.Type == LineType.write_byte || line.Type == LineType.write_short || line.Type == LineType.write_int)
+                else if (line.TypeIsWrite)
                 {
                     string semicolon = ";";
 

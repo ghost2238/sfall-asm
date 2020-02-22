@@ -51,11 +51,11 @@ namespace sfall_asm
             if (numBytes == 1)
                 return (int)ReadByte();
             else if (numBytes == 2)
-                return (int)Asm.SwapEndian(Convert.ToInt16(ReadChars(numBytes * 2), 16));
+                return (int)ASM.SwapEndian(Convert.ToInt16(ReadChars(numBytes * 2), 16));
             else if (numBytes == 3)
                 throw new Exception("Can't read 3 bytes.");
             else if (numBytes == 4)
-                return Asm.SwapEndian(Convert.ToInt32(ReadChars(numBytes * 2), 16));
+                return ASM.SwapEndian(Convert.ToInt32(ReadChars(numBytes * 2), 16));
             else
                 throw new Exception("Can't read more than 4 bytes.");
         }
@@ -64,9 +64,8 @@ namespace sfall_asm
         public void ResolveMemoryArg(MemoryArgs args, int currentOffset)
         {
             int addr = args.ResolveAddress(str.Substring(offset + 1), out string resolvedLiteral);
-            int jumpBytes = Asm.CalculateRelJump32(currentOffset, addr);
+            int jumpBytes = ASM.CalculateRelJump32(currentOffset, addr);
             var litBrackets = $"[{resolvedLiteral}]";
-
             var jumpBytesStr = jumpBytes.ToString("x");
             // https://github.com/ghost2238/sfall-asm/issues/3#issuecomment-588108479
             // Pad the address so that it's a valid 32-bit address.
@@ -107,7 +106,7 @@ namespace sfall_asm
             bool bodyStart = false;
 
             Match match;
-            ParseMode mode = ParseMode.Asm;
+            ParseMode mode = ParseMode.ASM;
             for (int i = 0; i < lines.Count; i++)
             {
                 var line = lines[i];
@@ -129,7 +128,7 @@ namespace sfall_asm
                     else if (var == "MACRO")
                         mode = ParseMode.Macro;
                     else if (var == "ASM")
-                        mode = ParseMode.Asm;
+                        mode = ParseMode.ASM;
 
                     continue;
                 }
@@ -150,7 +149,7 @@ namespace sfall_asm
                 if (line.Length >= 2 && line[0] == '/' && line[1] == '/')
                     continue;
 
-                if (mode == ParseMode.Asm)
+                if (mode == ParseMode.ASM)
                 {
                     if (!line.Contains('|'))
                         continue;

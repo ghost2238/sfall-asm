@@ -16,12 +16,12 @@ namespace sfall_asm
 
         public enum ParseMode
         {
-            Asm,  // Assembler byte code.
+            ASM,  // Assembler byte code.
             SSL,  // Fallout 2 script code.
             Macro // sfall-asm macros.
         }
 
-        public static class Asm
+        public static class ASM
         {
             // Swap from big-endian to little-endian (or back, if already swapped).
             public static int SwapEndian(int num)
@@ -154,12 +154,16 @@ namespace sfall_asm
                 Console.WriteLine();
                 Console.WriteLine("PATCH VARIABLES");
                 Console.WriteLine("\t--memory-args     Set memory variables");
+                Console.WriteLine();
+                Console.WriteLine("DEBUGGING");
+                Console.WriteLine("\t-r                Console.ReadKey() on exit");
 
                 return;
             }
 
             
             var memoryArgs = new MemoryArgs();
+            bool readKey = false;
             RunMode runMode = RunMode.Macro;
             SSLCode ssl = new SSLCode("VOODOO");
             if(args.Length>1)
@@ -167,22 +171,23 @@ namespace sfall_asm
                 foreach (var a in args)
                 {
                     // run mode
-                    if(a == "--macro")
+                    if (a == "--macro")
                         runMode = RunMode.Macro;
-                    else if(a== "--procedure")
+                    else if (a == "--procedure")
                         runMode = RunMode.Procedure;
                     else if (a == "--memory")
                         runMode = RunMode.Memory;
                     // ssl generation
-                    else if(a == "--no-pack")
+                    else if (a == "--no-pack")
                         ssl.Pack = false;
-                    else if(a == "--no-lower")
+                    else if (a == "--no-lower")
                         ssl.Lower = false;
-                    else if(a == "--no-macro-guard")
+                    else if (a == "--no-macro-guard")
                         ssl.MacroGuard = false;
-                    else if(a == "--rfall")
+                    else if (a == "--rfall")
                         ssl.RFall = true;
-
+                    else if (a == "-r")
+                        readKey = true;
                     else if (a.StartsWith("--memory-args="))
                     {
                         memoryArgs.FromArgString(a.Replace("--memory-args=", ""));
@@ -204,6 +209,9 @@ namespace sfall_asm
 
             var patch = new Patch(lines, runMode, ssl, memoryArgs);
             patch.Run();
+
+            if (readKey)
+                Console.ReadKey();
         }
     }
 }

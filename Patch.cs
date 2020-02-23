@@ -60,7 +60,6 @@ namespace sfall_asm
                 throw new Exception("Can't read more than 4 bytes.");
         }
 
-
         public void ResolveMemoryArg(MemoryArgs args, int currentOffset)
         {
             int addr = args.ResolveAddress(str.Substring(offset + 1), out string resolvedLiteral);
@@ -124,11 +123,20 @@ namespace sfall_asm
                     else if (var == "NAME")
                         ssl.Name = val;
                     else if (var == "SSL")
+                    {
                         mode = ParseMode.SSL;
+                        bodyStart = true;
+                    }
                     else if (var == "MACRO")
+                    {
                         mode = ParseMode.Macro;
+                        bodyStart = true;
+                    }
                     else if (var == "ASM")
+                    {
                         mode = ParseMode.ASM;
+                        bodyStart = true;
+                    }
 
                     continue;
                 }

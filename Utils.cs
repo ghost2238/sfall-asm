@@ -11,6 +11,7 @@ namespace sfall_asm
         ParseErrorMemoryAddress,
         FileDoesntExist,
         UnableToOpenFile,
+        InvalidUpdateFile,
         UnableToFindFallout2,
         UnhandledException
     }

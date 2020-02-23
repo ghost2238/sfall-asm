@@ -31,6 +31,7 @@ namespace sfall_asm
                 Console.WriteLine("\t--no-macro-guard  Macros won't be guarded with begin/end");
                 Console.WriteLine("\t--no-pack         Force using write_byte() function only");
                 Console.WriteLine("\t--rfall           Force using r_write_*() functions");
+                Console.WriteLine("\t--update-file     Apply changes to given file");
                 Console.WriteLine();
                 Console.WriteLine("PATCH VARIABLES");
                 Console.WriteLine("\t--memory-args     Set memory variables");
@@ -67,8 +68,12 @@ namespace sfall_asm
                     engine.protossl.RFall = true;
                 else if (a == "-r")
                     readKey = true;
+                else if (a == "-strict")
+                    Error.Strict = true;
                 else if (a.StartsWith("--memory-args="))
                     engine.ParseMemoryArgs(a);
+                else if(a.StartsWith("--update-file="))
+                    engine.SetUpdateFile(a.Replace("--update-file=", ""));
                 else
                     engine.AddPatch(a);
             }

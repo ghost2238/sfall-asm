@@ -179,6 +179,10 @@ namespace sfall_asm
         public string currentFilename;
         public int currentLine;
 
+        private string updateFilename = "";
+        private List<string> updateBegin = new List<string>();
+        private List<string> updateEnd = new List<string>();
+
         public PatchEngine()
         {
             runMode = RunMode.Macro;
@@ -191,7 +195,7 @@ namespace sfall_asm
         {
             return $"<{currentFilename}:{currentLine}>";
         }
-        
+
         public void AddPatch(string patchFile) => patchFiles.Add(patchFile);
         public bool MultiPatch => patchFiles.Count > 1;
 
@@ -223,21 +227,66 @@ namespace sfall_asm
             };
         }
 
+        public void SetUpdateFile(string filename)
+        {
+            Regex re = new Regex(@"^[\t ]*/[/]+[\t ]+sfall-asm-(begin|end)[\t ]+/[/]+[\t ]*$");
+            Match match;
+
+            bool begin = false, end = false;
+
+            updateFilename = currentFilename = filename;
+            foreach(string line in SafeReadAllLines(updateFilename))
+            {
+                match = re.Match(line);
+                if(match.Success)
+                {
+                    if(match.Groups[1].Value == "begin")
+                    {
+                        updateBegin.Add(line);
+                        updateBegin.Add("");
+                        begin = true;
+                    }
+                    else
+                    {
+                        updateEnd.Add("");
+                        updateEnd.Add(line);
+                        end = true;
+                    }
+                }
+                else
+                {
+                    if(!begin && !end)
+                        updateBegin.Add(line);
+                    else if(begin && !end)
+                        {}
+                    else if(begin && end)
+                        updateEnd.Add(line);
+                }
+            }
+
+            if( !begin || !end)
+                Error.Fatal($"Update file not valid.", ErrorCodes.InvalidUpdateFile);
+        }
+
         public void Run()
         {
-            foreach (string patchfile in patchFiles)
+            List<string> result = new List<string>();
+
+            result.AddRange(updateBegin);
+
+            foreach (string patchFile in patchFiles)
             {
-                this.currentFilename = Path.GetFileName(patchfile);
+                this.currentFilename = Path.GetFileName(patchFile);
                 SSLCode ssl = new SSLCode(protossl);
 
-                var lines = SafeReadAllLines(patchfile);
+                var lines = SafeReadAllLines(patchFile);
                 if (lines == null)
-                    Console.Error.WriteLine($"Skipping {patchfile}");
+                    Console.Error.WriteLine($"Skipping {patchFile}");
 
                 try
                 {
                     var patch = new Patch(lines, runMode, ssl, memoryArgs, (line) => this.currentLine = line);
-                    patch.Run();
+                    result.AddRange(patch.Run());
                 }
                 catch(Exception ex)
                 {
@@ -255,11 +304,17 @@ namespace sfall_asm
                     }
                 }
 
-                Console.WriteLine();
+                if(patchFile != patchFiles.Last())
+                    result.Add("");
             }
+
+            result.AddRange(updateEnd);
+
+            if(updateFilename.Length > 0)
+                File.WriteAllLines(updateFilename, result);
+            else
+                result.ForEach(line => Console.WriteLine(line));
         }
-
-
     }
 
     class Patch
@@ -440,19 +495,20 @@ namespace sfall_asm
             }
         }
 
-        public void Run()
+        public List<string> Run()
         {
+            List<string> result = new List<string>();
+
             if (runMode == RunMode.Memory)
             {
                 new Fallout2().WriteMemoryPatches(memoryBytes);
             }
             else
             {
-                foreach (var line in ssl.Get(runMode))
-                {
-                    Console.WriteLine(line);
-                }
+                result.AddRange(ssl.Get(runMode));
             }
+
+            return result;
         }
     }
 }

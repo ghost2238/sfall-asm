@@ -1,11 +1,107 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using static sfall_asm.Program;
 
 namespace sfall_asm
 {
+    public enum ParseMode
+    {
+        ASM,  // Assembler byte code.
+        SSL,  // Fallout 2 script code.
+        Macro // sfall-asm macros.
+    }
+
+    // Used to resolve [some_var] in the address field or in relative instructions.
+    public class MemoryArgs
+    {
+        private readonly Dictionary<string, int> vars = new Dictionary<string, int>();
+
+        public int this[string idx]
+        {
+            get => vars[idx];
+            set { vars[idx] = value; }
+        }
+
+        public string this[int address] => vars.FirstOrDefault(x => x.Value == address).Key;
+
+        public void FromArgString(string arg)
+        {
+            var allVars = arg.Split(',');
+            foreach (var aVar in allVars)
+            {
+                var keyVal = aVar.Replace(" ", "").Split('=');
+                if (keyVal.Length < 2)
+                    continue;
+                var var = keyVal[0];
+                var val = keyVal[1];
+                int converted = 0;
+                if (val == "")
+                    Error.Fatal($"The value for {var} can't be empty, it needs to be a valid hex memory address.", ErrorCodes.EmptyMemoryAddress);
+
+                try
+                {
+                    converted = Convert.ToInt32(val, 16);
+                }
+                catch (Exception)
+                {
+                    Error.Fatal($"{val} is not a valid hex memory address value for the variable {var} given in --memory-args.", ErrorCodes.InvalidMemoryAddress);
+                }
+
+                vars[var] = converted;
+            }
+        }
+
+        private void MemoryArgError(string var)
+        {
+            Error.Fatal($"Unable to resolve the variable [{var}], did you specify the correct --memory-args?",
+                ErrorCodes.UnableToResolveMemoryAddress);
+        }
+
+        // Resolves a memory address identifier which uses the [identifier] syntax.
+        // There are two variants:
+        // 1. Address literals, useful for specifying the absolute address next to instructions relying on relative addresses.
+        // 2. Variables, which are set via the CLI argument --memory-args.
+        public int ResolveAddress(string str, out string resolvedLiteral)
+        {
+            var startIdx = str.IndexOf('[');
+            var endIdx = str.IndexOf(']');
+            if (startIdx == -1)
+                Error.Fatal("Unable to resolve memory address, missing [", ErrorCodes.ParseErrorMemoryAddress);
+            if (endIdx == -1)
+                Error.Fatal("Unable to resolve memory address, missing ]", ErrorCodes.ParseErrorMemoryAddress);
+
+            var literal = str.Substring(startIdx + 1, endIdx - startIdx - 1);
+            if (literal.Length == 0)
+                Error.Fatal("Memory literal is empty.", ErrorCodes.ParseErrorMemoryAddress);
+
+            resolvedLiteral = literal;
+            if (literal[0] == '0' && literal[1] == 'x')
+            {
+                try
+                {
+                    return Convert.ToInt32(literal, 16);
+                }
+                catch (Exception ex)
+                {
+                    Error.Fatal($"{literal} is not a valid hex memory literal: {ex.Message}.", ErrorCodes.InvalidMemoryAddress);
+                    return -1;
+                }
+            }
+            else
+            {
+                if (!IsDefined(literal))
+                    MemoryArgError(literal);
+                return vars[literal];
+            }
+        }
+
+        public bool IsDefined(string var) => vars.ContainsKey(var);
+        public bool IsDefined(int val) => vars.ContainsValue(val);
+    }
+
     // Bytestring which can also contain memory literals.
     public class ByteString
     {
@@ -77,6 +173,98 @@ namespace sfall_asm
         public bool EOF => offset >= str.Length;
     }
 
+    class PatchEngine
+    {
+        private List<string> patchFiles = new List<string>();
+        private MemoryArgs memoryArgs = new MemoryArgs();
+        public RunMode runMode;
+        public SSLCode protossl;
+        public string currentFilename;
+        public int currentLine;
+
+        public PatchEngine()
+        {
+            runMode = RunMode.Macro;
+            protossl = new SSLCode("VOODOO");
+
+            Error.GetErrorContext = () => GetErrorContext();
+        }
+
+        public string GetErrorContext()
+        {
+            return $"<{currentFilename}:{currentLine}>";
+        }
+        
+        public void AddPatch(string patchFile) => patchFiles.Add(patchFile);
+        public bool MultiPatch => patchFiles.Count > 1;
+
+        public void ParseMemoryArgs(string arg)
+        {
+            memoryArgs.FromArgString(arg.Replace("--memory-args=", ""));
+        }
+
+        List<string> SafeReadAllLines(string file)
+        {
+            if (!File.Exists(file))
+            {
+                var msg = file + " doesn't exist.";
+                if (Error.Strict)
+                    Error.Fatal(msg, ErrorCodes.FileDoesntExist);
+                else
+                    Console.WriteLine(msg);
+
+                return null;
+            }
+            try
+            {
+                return File.ReadAllLines(file).ToList();
+            }
+            catch (Exception ex)
+            {
+                Error.Fatal("Unable to open file: " + ex.Message, ErrorCodes.UnableToOpenFile);
+                return null;
+            };
+        }
+
+        public void Run()
+        {
+            foreach (string patchfile in patchFiles)
+            {
+                this.currentFilename = Path.GetFileName(patchfile);
+                SSLCode ssl = new SSLCode(protossl);
+
+                var lines = SafeReadAllLines(patchfile);
+                if (lines == null)
+                    Console.Error.WriteLine($"Skipping {patchfile}");
+
+                try
+                {
+                    var patch = new Patch(lines, runMode, ssl, memoryArgs, (line) => this.currentLine = line);
+                    patch.Run();
+                }
+                catch(Exception ex)
+                {
+                    Error.Fatal($"Unhandled exception: {ex.Message}\r\n{ex.StackTrace}", ErrorCodes.UnhandledException);
+                }
+
+                if (!MultiPatch)
+                    break;
+
+                foreach (KeyValuePair<int, int> group in ssl.GetWriteGroups())
+                {
+                    if (memoryArgs.IsDefined(group.Key))
+                    {
+                        memoryArgs[memoryArgs[group.Key]] = group.Value;
+                    }
+                }
+
+                Console.WriteLine();
+            }
+        }
+
+
+    }
+
     class Patch
     {
         private List<string> lines;
@@ -84,13 +272,15 @@ namespace sfall_asm
         private SSLCode ssl;
         private MemoryArgs memoryArgs;
         private List<MemoryPatch> memoryBytes;
+        private Action<int> lineReporter;
 
-        public Patch(List<string> lines, RunMode runMode, SSLCode ssl, MemoryArgs memoryArgs)
+        public Patch(List<string> lines, RunMode runMode, SSLCode ssl, MemoryArgs memoryArgs, Action<int> lineReporter)
         {
             this.lines = lines;
             this.runMode = runMode;
             this.ssl = ssl;
             this.memoryArgs = memoryArgs;
+            this.lineReporter = lineReporter;
             this.Parse();
         }
 
@@ -108,6 +298,7 @@ namespace sfall_asm
             ParseMode mode = ParseMode.ASM;
             for (int i = 0; i < lines.Count; i++)
             {
+                lineReporter?.Invoke(i + 1);
                 var line = lines[i];
                 // Find additional patch configuration or mode switches
                 match = reMeta.Match(line);

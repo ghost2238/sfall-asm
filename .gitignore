@@ -11,3 +11,4 @@ Microsoft.Net.Compilers/
 compile.cmd
 sfall-asm.exe
 sfall-asm.pdb
+sfall-asm.csproj.user

@@ -35,16 +35,13 @@ namespace sfall_asm
         static extern bool VirtualProtectEx(IntPtr hProcess, IntPtr lpAddress,
         UIntPtr dwSize, uint flNewProtect, out uint lpflOldProtect);
 
-        private Process fallout2 = null;
+        private readonly Process fallout2 = null;
 
         public Fallout2()
         {
             var pids = Process.GetProcessesByName("Fallout2");
             if (pids.Length == 0)
-            {
-                Console.WriteLine("Unable to find Fallout2.exe process");
-                Environment.Exit(1);
-            }
+                Error.Fatal("Unable to find a valid Fallout2.exe process", ErrorCodes.UnableToFindFallout2);
             fallout2 = pids[0];
         }
 

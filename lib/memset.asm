@@ -1,9 +1,8 @@
 // SafeMemSet8(void* ptr, uint8 value, int num) using the Watcom calling convention.
-//! NAME SafeMemSet8
-//! BODY !//
+//! NAME SafeMemSet
+
 //! ASM !//
-  
-[address]  | 52               | push edx   - int num (bytes)
+[patch]    | 52               | push edx   - int num (bytes)
 00000000   | 53               | push ebx   - uint8 value
 00000000   | 50               | push eax   - void* ptr
 00000000   | 57               | push edi

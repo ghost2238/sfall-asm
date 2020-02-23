@@ -109,7 +109,7 @@ namespace sfall_asm
         public int offset;
         public ByteString(string str)
         {
-            this.str = str.Replace(" ", "");
+            this.str = str.Replace(" ", "").Replace(":", "");
             this.offset = 0;
         }
 
@@ -135,9 +135,6 @@ namespace sfall_asm
         {
             if (EOF)
                 return 0;
-            // This might not be the best solution for https://github.com/ghost2238/sfall-asm/issues/4
-            if (PeekChar(0) == ':')
-                offset++;
 
             return Convert.ToByte($"{PeekChar(0)}{PeekChar(1)}", 16);
         }

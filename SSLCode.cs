@@ -134,8 +134,7 @@ namespace sfall_asm
 
         public void AddCustomCode(string code)
         {
-            Lines.Add(new Line(code));
-            LastLine = Lines.Last();
+            AddLine(new Line(code));
         }
 
         public void AddWrite(int size, int address, int value, string comment = "")

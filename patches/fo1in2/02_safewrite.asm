@@ -1,6 +1,7 @@
 // We don't care about changing protection back from 
 // PAGE_EXECUTE_READWRITE since this should be used for writing/modifying code.
 //! NAME SafeWrite
+//! ASM !//
 /// SafeWrite8
 [patch]    | 52               | push edx   - int8 value
 00000000   | 50               | push eax   - void* ptr
@@ -49,4 +50,3 @@
 00000000   | 58               | pop eax
 00000000   | 5A               | pop edx
 00000000   | C3               | ret
-//! ASM !//

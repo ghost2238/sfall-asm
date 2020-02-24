@@ -361,7 +361,7 @@ namespace sfall_asm
                     string var = match.Groups[1].Value.Trim().ToUpper();
                     string val = match.Groups[2].Value.Trim();
 
-                    else if (var == "NAME")
+                    if (var == "NAME")
                         ssl.Name = val;
                     else if (var == "SSL")
                     {

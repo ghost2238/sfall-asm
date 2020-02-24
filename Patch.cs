@@ -271,6 +271,8 @@ namespace sfall_asm
         public void Run()
         {
             List<string> result = new List<string>();
+            SortedDictionary<int,string> addressMap = new SortedDictionary<int,string>();
+            int addressMapMax = 0;
 
             result.AddRange(updateBegin);
 
@@ -300,7 +302,13 @@ namespace sfall_asm
                 {
                     if (memoryArgs.IsDefined(group.Key))
                     {
-                        memoryArgs[memoryArgs[group.Key]] = group.Value;
+                        string memoryArgName = memoryArgs[group.Key];
+                        string defineName = $"{ssl.GetName()}__{memoryArgName}";
+
+                        addressMap[-memoryArgs[memoryArgName]] = defineName; // store as negative for cheap reversed order
+                        addressMapMax = Math.Max(addressMapMax, defineName.Length);
+
+                        memoryArgs[memoryArgName] = group.Value;
                     }
                 }
 
@@ -309,6 +317,15 @@ namespace sfall_asm
             }
 
             result.AddRange(updateEnd);
+
+            if(addressMap.Count > 0)
+            {
+                result.Insert(0, "");
+                foreach(KeyValuePair<int,string> define in addressMap)
+                {
+                    result.Insert(0, $"#define {define.Value.PadRight(addressMapMax)}  0x{(-define.Key).ToString("x")}");
+                }
+            }
 
             if(updateFilename.Length > 0)
                 File.WriteAllLines(updateFilename, result);

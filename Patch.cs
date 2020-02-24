@@ -344,6 +344,8 @@ namespace sfall_asm
             var reMeta = new Regex(@"^//![\t ]+([A-Za-z0-9]+)[\t ]+(.+)$");
             var reInfo = new Regex(@"^///[\t ]+(.+)$");
             var reAddr = new Regex(@"^[\t ]*(|\$[\+\-][A-Fa-f0-9]+[\t ]+|\$[\t ]+[=]+>[\t ]+)([A-Fa-f0-9]+)");
+
+            // Changes "///" behavior to include comment inside macro/procedure body
             bool bodyStart = false;
 
             Match match;
@@ -359,10 +361,6 @@ namespace sfall_asm
                     string var = match.Groups[1].Value.Trim().ToUpper();
                     string val = match.Groups[2].Value.Trim();
 
-                    // Changes "///" behavior to include comment inside macro/procedure body
-                    if (var == "BODY")
-                        bodyStart = true;
-                    // Sets macro/procedure name
                     else if (var == "NAME")
                         ssl.Name = val;
                     else if (var == "SSL")

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using static sfall_asm.Program;
 
 namespace sfall_asm
@@ -88,7 +89,7 @@ namespace sfall_asm
         protected List<string> Info = new List<string>();
         protected List<Line> Lines = new List<Line>();
         protected Line LastLine;
-        protected Line LastWriteLine;
+        protected Line LastSemicolonLine;
 
         public SSLCode(string namePrefix = "")
         {
@@ -112,7 +113,7 @@ namespace sfall_asm
             Info = other.Info;
             Lines = other.Lines;
             LastLine = other.LastLine;
-            LastWriteLine = other.LastWriteLine;
+            LastSemicolonLine = other.LastSemicolonLine;
             */
         }
 
@@ -134,7 +135,10 @@ namespace sfall_asm
 
         public void AddCustomCode(string code)
         {
+            code = Regex.Replace(code, @"[\t ]*;[\t ]*$", "");
+
             AddLine(new Line(code));
+            LastSemicolonLine = LastLine;
         }
 
         public void AddWrite(int size, int address, int value, string comment = "")
@@ -151,7 +155,7 @@ namespace sfall_asm
                 throw new ArgumentOutOfRangeException(nameof(size));
 
             AddLine(new Line(type, address, value, comment));
-            LastWriteLine = LastLine;
+            LastSemicolonLine = LastLine;
 
             // vanilla sfall cannot write outside Fallout2.exe memory currently,
             // after preparing all lines, code is tweaked to use less restricted rfall implementation
@@ -242,7 +246,7 @@ namespace sfall_asm
         {
             if (MacroGuard)
             {
-                int writeCount = 0;
+                int bodyCount = 0;
                 foreach (Line line in Lines)
                 {
                     switch (line.Type)
@@ -250,15 +254,16 @@ namespace sfall_asm
                         case LineType.write_byte:
                         case LineType.write_short:
                         case LineType.write_int:
-                            writeCount++;
+                        case LineType.code:
+                            bodyCount++;
                             break;
                     }
 
-                    if (writeCount >= 2)
+                    if (bodyCount >= 2)
                         break;
                 }
 
-                if (writeCount >= 2)
+                if (bodyCount >= 2)
                 {
                     AddLine(new Line(LineType.begin, 0, 0), true);
                     AddLine(new Line(LineType.end, 0, 0));
@@ -372,24 +377,28 @@ namespace sfall_asm
             List<string> result = new List<string>();
             string resultmp;
 
-            int writeCount = 0;
+            int bodyCount = 0;
 
             // collect maximum length of each subelement
             int maxFunctionLength = 0, maxAddressLength = 0, maxValueLength = 0, maxCommentLength = 0;
             int maxRawWriteMacroLength, maxRawWriteProcedureLength = 0, maxRawCommentLength = 0;
-            int maxRawLength = 0;
+            int maxRawCodeLength = 0, maxRawLength = 0;
 
             foreach (Line line in Lines)
             {
                 if (line.TypeIsWrite)
                 {
-                    writeCount++;
+                    bodyCount++;
                     line.HexFormat = Lower ? "x" : "X";
 
                     maxFunctionLength = Math.Max(maxFunctionLength, line.FunctionString.Length);
                     maxAddressLength = Math.Max(maxAddressLength, line.AddressString.Length);
                     maxValueLength = Math.Max(maxValueLength, line.ValueString.Length);
                     maxCommentLength = Math.Max(maxCommentLength, line.Comment.Length);
+                }
+                else if (line.Type == LineType.code)
+                {
+                    maxRawCodeLength = Math.Max(maxRawCodeLength, line.Code.Length);
                 }
                 else if (line.Type == LineType.comment)
                 {
@@ -404,9 +413,15 @@ namespace sfall_asm
             maxRawCommentLength = 1 + 1 + 1 + maxRawCommentLength + 1 + 1 + 1;
 
             if (mode == RunMode.Macro)
+            {
                 maxRawLength = Math.Max(maxRawWriteMacroLength, maxRawCommentLength);
+                maxRawLength = Math.Max(maxRawLength, maxRawCodeLength + 1);
+            }
             else if (mode == RunMode.Procedure)
+            {
                 maxRawLength = Math.Max(maxRawWriteProcedureLength, maxRawCommentLength);
+                maxRawLength = Math.Max(maxRawLength, maxRawCodeLength + 1);
+            }
 
             string prefix = "";
             if (mode == RunMode.Macro)
@@ -425,6 +440,21 @@ namespace sfall_asm
             foreach (var line in Lines)
             {
                 resultmp = prefix;
+
+                string semicolon()
+                {
+                    string result = ";";
+
+                    if (mode == RunMode.Macro)
+                    {
+                        if (!MacroGuard && line == LastSemicolonLine)
+                            result = " ";
+                        else if (bodyCount == 1)
+                            result = " ";
+                    }
+
+                    return result;
+                }
 
                 string comment(string value) => (mode == RunMode.Macro ? $"/* {value} */" : $"// {value}");
 
@@ -447,27 +477,17 @@ namespace sfall_asm
                 }
                 else if (line.TypeIsWrite)
                 {
-                    string semicolon = ";";
-
-                    if (mode == RunMode.Macro)
-                    {
-                        if (!MacroGuard && line == LastWriteLine)
-                            semicolon = " ";
-                        else if (writeCount == 1)
-                            semicolon = " ";
-                    }
-
                     resultmp += line.FunctionString.PadRight(maxFunctionLength);
                     resultmp += $"({line.AddressString}, ".PadRight(maxAddressLength + 3);
-                    resultmp += $"{line.ValueString}){semicolon} ".PadRight(maxValueLength + 3);
+                    resultmp += $"{line.ValueString}){semicolon()} ".PadRight(maxValueLength + 3);
 
                     if (line.Comment.Length > 0)
                         resultmp += comment(line.Comment);
                 }
+                else if (line.Type == LineType.code)
+                    resultmp += $"{line.Code}{semicolon()}";
                 else if (line.Type == LineType.comment)
                     resultmp += comment(line.Comment);
-                else if (line.Type == LineType.code)
-                    resultmp += line.Code;
 
                 if (mode == RunMode.Macro)
                 {

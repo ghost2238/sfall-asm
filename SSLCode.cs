@@ -443,17 +443,17 @@ namespace sfall_asm
 
                 string semicolon()
                 {
-                    string result = ";";
+                    string semicolon_result = ";";
 
                     if (mode == RunMode.Macro)
                     {
                         if (!MacroGuard && line == LastSemicolonLine)
-                            result = " ";
+                            semicolon_result = " ";
                         else if (bodyCount == 1)
-                            result = " ";
+                            semicolon_result = " ";
                     }
 
-                    return result;
+                    return semicolon_result;
                 }
 
                 string comment(string value) => (mode == RunMode.Macro ? $"/* {value} */" : $"// {value}");

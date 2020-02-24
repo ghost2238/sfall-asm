@@ -1,4 +1,6 @@
 ﻿using System;
+using System.IO;
+using System.Linq;
 
 namespace sfall_asm
 {
@@ -72,10 +74,15 @@ namespace sfall_asm
                     Error.Strict = true;
                 else if (a.StartsWith("--memory-args="))
                     engine.ParseMemoryArgs(a);
-                else if(a.StartsWith("--update-file="))
+                else if (a.StartsWith("--update-file="))
                     engine.SetUpdateFile(a.Replace("--update-file=", ""));
                 else
-                    engine.AddPatch(a);
+                {
+                    if(Directory.Exists(a))
+                        Directory.GetFiles(a, "*.asm").OrderBy(x => x).ToList().ForEach(x => engine.AddPatch(x));
+                    else 
+                        engine.AddPatch(a);
+                }
             }
 
             engine.Run();

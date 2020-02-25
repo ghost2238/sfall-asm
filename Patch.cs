@@ -170,23 +170,119 @@ namespace sfall_asm
         public bool EOF => offset >= str.Length;
     }
 
+    class UpdateFile
+    {
+        public string Name { get; private set; } = "";
+        public Dictionary<string,int> Tags { get; private set; } = new Dictionary<string,int>();
+        public List<string> Lines { get; private set; } = new List<string>();
+        public bool IsSet { get; private set; } = false;
+
+        public readonly Regex TagRegex;
+        public readonly string TagOpen;
+        public readonly string TagClose;
+
+        public UpdateFile(Regex tagRegex, string tagOpen, string tagClose)
+        {
+            TagRegex = tagRegex;
+            TagOpen = tagOpen;
+            TagClose = tagClose;
+        }
+
+        // cache file content without lines inside all tags
+        // position of all tags is saved for later use
+        public void SetData(string filename, List<string> lines)
+        {
+            UnsetData();
+
+            Match match;
+            bool tag = false;
+            int lineNum = 0;
+
+            foreach(string line in lines)
+            {
+                match = TagRegex.Match(line);
+                if(match.Success)
+                {
+                    lineNum++;
+
+                    if(match.Groups[2].Value == TagOpen)
+                    {
+                        if(tag)
+                            Error.Fatal($"UpdateFile invalid : nested open tag", ErrorCodes.InvalidUpdateFile);
+
+                        Tags[match.Groups[1].Value] = lineNum;
+                        Lines.Add(line);
+                        tag = true;
+                    }
+                    else if(match.Groups[2].Value == TagClose)
+                    {
+                        if(!tag)
+                            Error.Fatal($"UpdateFile invalid : close tag without open tag", ErrorCodes.InvalidUpdateFile);
+
+                        Lines.Add(line);
+                        tag = false;
+                    }
+                    else
+                        Error.Fatal($"UpdateFile invalid : unknown tag type", ErrorCodes.InvalidUpdateFile);
+                }
+                else if(!tag)
+                {
+                    Lines.Add(line);
+                    lineNum++;
+                }
+            }
+
+            if(tag)
+                Error.Fatal($"UpdateFile invalid : tag not closed", ErrorCodes.InvalidUpdateFile);
+
+            IsSet = true;
+            Name = filename;
+        }
+
+        public void UnsetData()
+        {
+            IsSet = false;
+
+            Name = "";
+            Tags.Clear();
+            Lines.Clear();
+        }
+
+        public void SetTag(string name, List<string> content)
+        {
+            if(!IsSet || !Tags.ContainsKey(name) || content.Count == 0)
+                return;
+
+            int lineNum = Tags[name];
+
+            Lines.Insert(lineNum, ""); // empty line before close tag
+            Lines.InsertRange(lineNum, content);
+            Lines.Insert(lineNum, ""); // empty line after open tag
+
+            // shift position of all tags after this one
+            foreach(string key in Tags.Keys.ToList())
+            {
+                if (Tags[key] > lineNum)
+                    Tags[key] += content.Count + 2;
+            }
+        }
+    }
+
     class PatchEngine
     {
         private List<string> patchFiles = new List<string>();
         private MemoryArgs memoryArgs = new MemoryArgs();
         public RunMode runMode;
         public SSLCode protossl;
+        public UpdateFile updateFile;
         public string currentFilename;
         public int currentLine;
-
-        private string updateFilename = "";
-        private List<string> updateBegin = new List<string>();
-        private List<string> updateEnd = new List<string>();
 
         public PatchEngine()
         {
             runMode = RunMode.Macro;
             protossl = new SSLCode("VOODOO");
+            updateFile = new UpdateFile(new Regex(@"^[\t ]*/[/]+[\t ]+sfall-asm:([A-Za-z0-9_]+)-(begin|end)[\t ]+/[/]+[\t ]*$"), "begin", "end");
 
             Error.GetErrorContext = () => GetErrorContext();
         }
@@ -204,7 +300,7 @@ namespace sfall_asm
             memoryArgs.FromArgString(arg.Replace("--memory-args=", ""));
         }
 
-        List<string> SafeReadAllLines(string file)
+        public List<string> SafeReadAllLines(string file)
         {
             if (!File.Exists(file))
             {
@@ -227,52 +323,12 @@ namespace sfall_asm
             };
         }
 
-        public void SetUpdateFile(string filename)
-        {
-            Regex re = new Regex(@"^[\t ]*/[/]+[\t ]+sfall-asm-(begin|end)[\t ]+/[/]+[\t ]*$");
-            Match match;
-
-            bool begin = false, end = false;
-
-            updateFilename = currentFilename = filename;
-            foreach(string line in SafeReadAllLines(updateFilename))
-            {
-                match = re.Match(line);
-                if(match.Success)
-                {
-                    if(match.Groups[1].Value == "begin")
-                    {
-                        updateBegin.Add(line);
-                        updateBegin.Add("");
-                        begin = true;
-                    }
-                    else
-                    {
-                        updateEnd.Add("");
-                        updateEnd.Add(line);
-                        end = true;
-                    }
-                }
-                else
-                {
-                    if(!begin && !end)
-                        updateBegin.Add(line);
-                    else if(begin && !end)
-                        {}
-                    else if(begin && end)
-                        updateEnd.Add(line);
-                }
-            }
-
-            if( !begin || !end)
-                Error.Fatal($"Update file not valid.", ErrorCodes.InvalidUpdateFile);
-        }
-
         public void Run()
         {
             List<string> result = new List<string>();
-            List<string> macroList = new List<string>();
-            List<string> addressList = new List<string>();
+            List<string> defines = new List<string>();
+            List<string> code = new List<string>();
+
             SortedDictionary<int,string> addressDict = new SortedDictionary<int,string>();
             int addressDictMax = 0;
 
@@ -288,7 +344,7 @@ namespace sfall_asm
                 try
                 {
                     var patch = new Patch(lines, runMode, ssl, memoryArgs, (line) => this.currentLine = line);
-                    macroList.AddRange(patch.Run());
+                    code.AddRange(patch.Run());
                 }
                 catch(Exception ex)
                 {
@@ -313,25 +369,30 @@ namespace sfall_asm
                 }
 
                 if(patchFile != patchFiles.Last())
-                    macroList.Add("");
+                    code.Add("");
             }
 
-            if(addressDict.Count > 0)
+            foreach(KeyValuePair<int,string> define in addressDict)
             {
-                addressList.Insert(0, "");
-                foreach(KeyValuePair<int,string> define in addressDict)
-                {
-                    addressList.Insert(0, $"#define {define.Value.PadRight(addressDictMax)}  0x{(-define.Key).ToString("x")}");
-                }
+                defines.Insert(0, $"#define {define.Value.PadRight(addressDictMax)}  0x{(-define.Key).ToString("x")}");
             }
 
-            result.AddRange(updateBegin);
-            result.AddRange(addressList);
-            result.AddRange(macroList);
-            result.AddRange(updateEnd);
+            if(updateFile.IsSet)
+            {
+                updateFile.SetTag(nameof(defines), defines);
+                updateFile.SetTag(nameof(code), code);
+            }
+            else
+            {
+                if(defines.Count > 0)
+                    defines.Add("");
 
-            if(updateFilename.Length > 0)
-                File.WriteAllLines(updateFilename, result);
+                result.AddRange(defines);
+                result.AddRange(code);
+            }
+
+            if(updateFile.IsSet)
+                File.WriteAllLines(updateFile.Name, updateFile.Lines);
             else
                 result.ForEach(line => Console.WriteLine(line));
         }

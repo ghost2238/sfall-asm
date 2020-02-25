@@ -75,7 +75,11 @@ namespace sfall_asm
                 else if (a.StartsWith("--memory-args="))
                     engine.ParseMemoryArgs(a);
                 else if (a.StartsWith("--update-file="))
-                    engine.SetUpdateFile(a.Replace("--update-file=", ""));
+                {
+                    string filename = a.Replace("--update-file=", "");
+                    engine.currentFilename = filename;
+                    engine.updateFile.SetData(filename, engine.SafeReadAllLines(filename));
+                }
                 else
                 {
                     if(Directory.Exists(a))

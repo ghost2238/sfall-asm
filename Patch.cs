@@ -271,10 +271,10 @@ namespace sfall_asm
         public void Run()
         {
             List<string> result = new List<string>();
-            SortedDictionary<int,string> addressMap = new SortedDictionary<int,string>();
-            int addressMapMax = 0;
-
-            result.AddRange(updateBegin);
+            List<string> macroList = new List<string>();
+            List<string> addressList = new List<string>();
+            SortedDictionary<int,string> addressDict = new SortedDictionary<int,string>();
+            int addressDictMax = 0;
 
             foreach (string patchFile in patchFiles)
             {
@@ -288,7 +288,7 @@ namespace sfall_asm
                 try
                 {
                     var patch = new Patch(lines, runMode, ssl, memoryArgs, (line) => this.currentLine = line);
-                    result.AddRange(patch.Run());
+                    macroList.AddRange(patch.Run());
                 }
                 catch(Exception ex)
                 {
@@ -305,27 +305,30 @@ namespace sfall_asm
                         string memoryArgName = memoryArgs[group.Key];
                         string defineName = $"{ssl.GetName()}__{memoryArgName}";
 
-                        addressMap[-memoryArgs[memoryArgName]] = defineName; // store as negative for cheap reversed order
-                        addressMapMax = Math.Max(addressMapMax, defineName.Length);
+                        addressDict[-memoryArgs[memoryArgName]] = defineName; // store as negative for cheap reversed order
+                        addressDictMax = Math.Max(addressDictMax, defineName.Length);
 
                         memoryArgs[memoryArgName] = group.Value;
                     }
                 }
 
                 if(patchFile != patchFiles.Last())
-                    result.Add("");
+                    macroList.Add("");
             }
 
-            result.AddRange(updateEnd);
-
-            if(addressMap.Count > 0)
+            if(addressDict.Count > 0)
             {
-                result.Insert(0, "");
-                foreach(KeyValuePair<int,string> define in addressMap)
+                addressList.Insert(0, "");
+                foreach(KeyValuePair<int,string> define in addressDict)
                 {
-                    result.Insert(0, $"#define {define.Value.PadRight(addressMapMax)}  0x{(-define.Key).ToString("x")}");
+                    addressList.Insert(0, $"#define {define.Value.PadRight(addressDictMax)}  0x{(-define.Key).ToString("x")}");
                 }
             }
+
+            result.AddRange(updateBegin);
+            result.AddRange(addressList);
+            result.AddRange(macroList);
+            result.AddRange(updateEnd);
 
             if(updateFilename.Length > 0)
                 File.WriteAllLines(updateFilename, result);

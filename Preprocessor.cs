@@ -94,13 +94,6 @@ namespace sfall_asm
             for (int i = 0; i < code.Lines.Count; i++)
             {
                 var line = code.Lines[i];
-                //var size = group.Value - group.Key;
-
-                
-                //bool insidePatchGroup = false
-
-                // We are only interested in groups with are defined with a memory variable where the variable contains "malloc"
-                // E.g [patch::malloc] or [malloc]
                 var variable = GetAddressVariable(line.Address);
                 if (variable != null && mallocVars.Contains(variable.name))
                 {

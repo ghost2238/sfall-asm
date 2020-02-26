@@ -1,6 +1,7 @@
 // We don't care about changing protection back from 
 // PAGE_EXECUTE_READWRITE since this should be used for writing/modifying code.
 //! NAME SafeWrite32_
+/// https://github.com/phobos2077/sfall/issues/288
 //! ASM !//
 [patch]    | 52               | push edx   - int32 value
 00000000   | 50               | push eax   - void* ptr

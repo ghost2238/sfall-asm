@@ -1,6 +1,6 @@
 // SafeMemSet8(void* ptr, uint8 value, int num) using the Watcom calling convention.
 //! NAME SafeMemSet
-
+/// https://github.com/phobos2077/sfall/issues/285
 //! ASM !//
 [patch]    | 52               | push edx   - int num (bytes)
 00000000   | 53               | push ebx   - uint8 value

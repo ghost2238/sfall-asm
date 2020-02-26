@@ -1,6 +1,7 @@
 //! NAME location_discover_radius
 /// No radius when a location is revealed on the worldmap
 /// Modifies sfall code
+/// https://github.com/phobos2077/sfall/issues/255
 //! SSL !//
 debug("Applying location_discover_radius");
 /// Calculate where ddraw.sfall::wmAreaMarkVisitedState_hack+0x51 and write 0 to it.

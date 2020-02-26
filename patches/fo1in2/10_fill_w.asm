@@ -1,7 +1,7 @@
 //! NAME fill_w
 /// Fill_W that works like in Fallout 1
 /// https://github.com/rotators/Fo1in2/issues/16
-
+/// https://github.com/phobos2077/sfall/issues/287
 //! ASM !//
 
 /// fill_w implementation

@@ -34,6 +34,7 @@ namespace sfall_asm
                 Console.WriteLine("\t--no-pack         Force using write_byte() function only");
                 Console.WriteLine("\t--rfall           Force using r_write_*() functions");
                 Console.WriteLine("\t--update-file     Apply changes to given file");
+                Console.WriteLine("\t--malloc          Use dynamically allocated memory in patches where requested");
                 Console.WriteLine();
                 Console.WriteLine("PATCH VARIABLES");
                 Console.WriteLine("\t--memory-args     Set memory variables");

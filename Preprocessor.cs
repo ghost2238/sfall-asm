@@ -156,7 +156,7 @@ namespace sfall_asm
             {
                 code.Lines.Insert(startIdx, new SSLCode.Line("addr := VOODOO_nmalloc(" + bytes + ")"));
                 if (debugCode)
-                    code.Lines.Insert(startIdx, new SSLCode.Line($"debug(\"Allocated {bytes} bytes @ \"+ addr)"));
+                    code.Lines.Insert(startIdx+1, new SSLCode.Line($"debug(\"Allocated {bytes} bytes @ \"+ addr)"));
             }
         }
 

@@ -45,8 +45,9 @@ namespace sfall_asm
                 Console.WriteLine("\t-strict           Use strict error handling");
 
                 return;
-            }            
-            
+            }
+
+            bool malloc = false;
             bool readKey = false;
             var engine = new PatchEngine();
 
@@ -68,6 +69,8 @@ namespace sfall_asm
                     engine.protossl.MacroGuard = false;
                 else if (a == "--rfall")
                     engine.protossl.RFall = true;
+                else if (a == "--malloc")
+                    malloc = true;
                 else if (a == "-r")
                     readKey = true;
                 else if (a == "-strict")
@@ -82,13 +85,17 @@ namespace sfall_asm
                 }
                 else
                 {
-                    if(Directory.Exists(a))
+                    if (Directory.Exists(a))
                         Directory.GetFiles(a, "*.asm").OrderBy(x => x).ToList().ForEach(x => engine.AddPatch(x));
-                    else 
+                    else
                         engine.AddPatch(a);
                 }
             }
-
+            if (malloc)
+            {
+                engine.AddASMParser(new JumpASMRewriter());
+                engine.AddSSLPreProcessor(new MallocPreProcessor(true));
+            }
             engine.Run();
 
             if (readKey)

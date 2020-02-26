@@ -42,6 +42,7 @@
   <ItemGroup>
     <Compile Include="MemoryPatch.cs" />
     <Compile Include="Patch.cs" />
+    <Compile Include="Preprocessor.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="SSLCode.cs" />

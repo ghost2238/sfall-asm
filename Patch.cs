@@ -14,6 +14,26 @@ namespace sfall_asm
         Macro // sfall-asm macros.
     }
 
+    public enum ParseEvent
+    {
+        ResolvedAddressMemoryArg // A memory arg was found in the address column and was resolved.
+    }
+
+    public class MemoryArgInfo
+    {
+        public string name;
+        public int address;
+        // public string fileInfo; // file and line.
+    }
+
+    public class ParseEventInfo
+    {
+        public ParseEvent @event;
+        public object info;
+
+        public MemoryArgInfo GetMemoryArgInfo() => (MemoryArgInfo)info;
+    }
+
     // Used to resolve [some_var] in the address field or in relative instructions.
     public class MemoryArgs
     {
@@ -107,6 +127,9 @@ namespace sfall_asm
     {
         private string str;
         public int offset;
+
+        public string RawString { get => str; }
+
         public ByteString(string str)
         {
             this.str = str.Replace(" ", "").Replace(":", "");
@@ -168,6 +191,8 @@ namespace sfall_asm
         }
 
         public bool EOF => offset >= str.Length;
+
+        public string Str { get => str; set => str = value; }
     }
 
     class UpdateFile
@@ -270,7 +295,10 @@ namespace sfall_asm
 
     class PatchEngine
     {
+        private List<IASMParser> ASMParsers = new List<IASMParser>();
+        private List<ISSLPreProcessor> SSLPreProcessor = new List<ISSLPreProcessor>();
         private List<string> patchFiles = new List<string>();
+        private List<ParseEventInfo> parseEvents = new List<ParseEventInfo>();
         private MemoryArgs memoryArgs = new MemoryArgs();
         public RunMode runMode;
         public SSLCode protossl;
@@ -287,12 +315,15 @@ namespace sfall_asm
             Error.GetErrorContext = () => GetErrorContext();
         }
 
+        public string FileAndLine => $"{currentFilename}:{currentLine}";
         public string GetErrorContext()
         {
-            return $"<{currentFilename}:{currentLine}>";
+            return $"<{FileAndLine}>";
         }
 
         public void AddPatch(string patchFile) => patchFiles.Add(patchFile);
+        public void AddSSLPreProcessor(ISSLPreProcessor processor) => SSLPreProcessor.Add(processor);
+        public void AddASMParser(IASMParser parser) => ASMParsers.Add(parser);
         public bool MultiPatch => patchFiles.Count > 1;
 
         public void ParseMemoryArgs(string arg)
@@ -343,8 +374,9 @@ namespace sfall_asm
 
                 try
                 {
-                    var patch = new Patch(lines, runMode, ssl, memoryArgs, (line) => this.currentLine = line);
-                    code.AddRange(patch.Run());
+                    var patch = new Patch(lines, runMode, ssl, memoryArgs, (line) => this.currentLine = line, this.ASMParsers);
+                    code.AddRange(patch.Run(SSLPreProcessor));
+                    this.parseEvents.AddRange(patch.parseEvents);
                 }
                 catch(Exception ex)
                 {
@@ -398,29 +430,34 @@ namespace sfall_asm
         }
     }
 
-    class Patch
+    public class Patch
     {
         private List<string> lines;
         private RunMode runMode;
-        private SSLCode ssl;
-        private MemoryArgs memoryArgs;
         private List<MemoryPatch> memoryBytes;
         private Action<int> lineReporter;
+        private List<IASMParser> ASMParsers;
+        public int currentOffset;
+        public int lastOffset;
+        public SSLCode ssl;
+        public MemoryArgs memoryArgs;
+        public List<ParseEventInfo> parseEvents = new List<ParseEventInfo>();
 
-        public Patch(List<string> lines, RunMode runMode, SSLCode ssl, MemoryArgs memoryArgs, Action<int> lineReporter)
+        public Patch(List<string> lines, RunMode runMode, SSLCode ssl, MemoryArgs memoryArgs, Action<int> lineReporter, List<IASMParser> asmParsers)
         {
             this.lines = lines;
             this.runMode = runMode;
             this.ssl = ssl;
             this.memoryArgs = memoryArgs;
             this.lineReporter = lineReporter;
+            this.ASMParsers = asmParsers;
             this.Parse();
         }
 
         public void Parse()
         {
             this.memoryBytes = new List<MemoryPatch>();
-            var lastOffset = 0;
+            lastOffset = 0;
 
             var reMeta = new Regex(@"^//![\t ]+([A-Za-z0-9]+)[\t ]+(.+)$");
             var reInfo = new Regex(@"^///[\t ]+(.+)$");
@@ -498,7 +535,19 @@ namespace sfall_asm
                     {
                         // Extract and resolve it
                         if (spl[0].Count(x => x == '[') == 1 && spl[0].Count(x => x == ']') == 1)
-                            spl[0] = memoryArgs.ResolveAddress(spl[0], out _).ToString("x");
+                        {
+                            int address = memoryArgs.ResolveAddress(spl[0], out string resolvedVariable);
+                            spl[0] = address.ToString("x");
+                            this.parseEvents.Add(new ParseEventInfo()
+                            {
+                                @event=ParseEvent.ResolvedAddressMemoryArg,
+                                info = new MemoryArgInfo()
+                                {
+                                    address = address,
+                                    name = resolvedVariable
+                                }
+                            });
+                        }
                     }
 
                     if (spl[0].Length == 0)
@@ -507,14 +556,24 @@ namespace sfall_asm
                     // changes "///" behavior to include comment inside macro/procedure body
                     bodyStart = true;
 
-                    var offset = Convert.ToInt32(spl[0].Trim(), 16);
-                    if (offset == 0)
-                        offset = lastOffset;
+                    currentOffset = Convert.ToInt32(spl[0].Trim(), 16);
+                    if (currentOffset == 0)
+                        currentOffset = lastOffset;
 
                     var bytes = new ByteString(spl[1]);
                     bool opLine = true;
                     while (!bytes.EOF)
                     {
+                        bool parserHandled = false;
+                        foreach(var asmParser in this.ASMParsers)
+                        {
+                            parserHandled = asmParser.Process(bytes, currentOffset, this, parseEvents);
+                            if (parserHandled)
+                                break;
+                        }
+                        if (parserHandled)
+                            break;
+
                         // Instructions which supports using absolute->rel addressing or memory variable.
                         // https://github.com/ghost2238/sfall-asm/issues/3
                         // This only works for 32-bit, if we are in 16-bit mode it won't work.
@@ -522,7 +581,7 @@ namespace sfall_asm
                         if ((bytes.PeekByte() == 0xE9) || (bytes.PeekByte() == 0xE8))
                         {
                             if (bytes.PeekChar(2) == '[')
-                                bytes.ResolveMemoryArg(memoryArgs, offset);
+                                bytes.ResolveMemoryArg(memoryArgs, currentOffset);
                         }
 
                         if (runMode == RunMode.Memory)
@@ -530,7 +589,7 @@ namespace sfall_asm
                             memoryBytes.Add(new MemoryPatch()
                             {
                                 data = new byte[] { bytes.ReadByte() },
-                                offset = offset
+                                offset = currentOffset
                             });
                         }
                         else
@@ -543,14 +602,14 @@ namespace sfall_asm
                             else
                                 writeSize = 1;
 
-                            ssl.AddWrite(writeSize, offset, bytes.AsInt(writeSize), opLine ? spl[2].Trim() : "");
+                            ssl.AddWrite(writeSize, currentOffset, bytes.AsInt(writeSize), opLine ? spl[2].Trim() : "");
                             // this is to decide if comment should be written or not.
                             opLine = false;
-                            offset += writeSize - 1;
+                            currentOffset += writeSize - 1;
                         }
 
-                        offset++;
-                        lastOffset = offset;
+                        currentOffset++;
+                        lastOffset = currentOffset;
                     }
                 }
                 else if (mode == ParseMode.SSL)
@@ -574,7 +633,7 @@ namespace sfall_asm
             }
         }
 
-        public List<string> Run()
+        public List<string> Run(List<ISSLPreProcessor> preProcessors)
         {
             List<string> result = new List<string>();
 
@@ -584,7 +643,7 @@ namespace sfall_asm
             }
             else
             {
-                result.AddRange(ssl.Get(runMode));
+                result.AddRange(ssl.Get(runMode, preProcessors, this.parseEvents));
             }
 
             return result;

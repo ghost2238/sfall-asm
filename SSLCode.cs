@@ -9,7 +9,7 @@ namespace sfall_asm
     public class SSLCode
     {
         // NOTE: enum names are used as-is in generated code (in most cases)
-        protected enum LineType
+        public enum LineType
         {
             begin,
             end,
@@ -21,7 +21,7 @@ namespace sfall_asm
             code // custom code
         };
 
-        protected class Line
+        public class Line
         {
             public LineType Type;
             public bool TypeIsWrite => Type == LineType.write_byte || Type == LineType.write_short || Type == LineType.write_int;
@@ -57,6 +57,7 @@ namespace sfall_asm
                     return result;
                 }
             }
+            
 
             public Line(string code)
             {
@@ -87,7 +88,7 @@ namespace sfall_asm
         public bool RFall = false;
 
         protected List<string> Info = new List<string>();
-        protected List<Line> Lines = new List<Line>();
+        public List<Line> Lines = new List<Line>();
         protected Line LastLine;
         protected Line LastSemicolonLine;
 
@@ -485,7 +486,11 @@ namespace sfall_asm
                         resultmp += comment(line.Comment);
                 }
                 else if (line.Type == LineType.code)
-                    resultmp += $"{line.Code}{semicolon()}";
+                {
+                    resultmp += $"{line.Code}{semicolon()}".PadRight(maxRawCodeLength + 3);
+                    if (line.Comment.Length > 0)
+                        resultmp += comment(line.Comment);
+                }
                 else if (line.Type == LineType.comment)
                     resultmp += comment(line.Comment);
 
@@ -504,9 +509,10 @@ namespace sfall_asm
             return result;
         }
 
-        public List<string> Get(RunMode mode)
+        public List<string> Get(RunMode mode, List<ISSLPreProcessor> preProcessors, List<ParseEventInfo> parseEvents)
         {
             PreProcess(mode);
+            preProcessors.ForEach(x => x.Process(this, parseEvents));
 
             List<string> result = new List<string>();
 

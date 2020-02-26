@@ -4,9 +4,8 @@
 
 //! ASM !//
 
-/// wmMarkSubTileRadiusVisited_
-004C3735 | E9 [patch]    | jmp [patch]
 /// fill_w implementation
+/// malloc(patch) - this code can be used with --malloc
 [patch]  | 75 4D         | jne _ret
 00000000 | 83EC 04       | sub esp,4
 00000000 | C60424 00     | mov ss:[esp+4],0
@@ -50,3 +49,7 @@
 /// _ret
 00000000 | 83C4 0C       | add esp,C
 00000000 | E9 [0x4C373A] | jmp fallout2.4C373A
+/// END
+//! SSL !//
+/// Hook in wmMarkSubTileRadiusVisited_
+call VOODOO_MakeJump(0x004C3735, addr)

@@ -8,6 +8,6 @@ sfall-asm.csproj.user
 # Microsoft.Net.Compilers\tools\csc.exe -preferreduilang:en -debug:embedded -out:sfall-asm.exe Program.cs
 nuget.exe
 Microsoft.Net.Compilers/
-compile.cmd
+compile.sh
 sfall-asm.exe
 sfall-asm.pdb

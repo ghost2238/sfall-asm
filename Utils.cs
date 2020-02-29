@@ -8,6 +8,7 @@ namespace sfall_asm
         EmptyMemoryAddress = 1,
         UnableToResolveMemoryAddress,
         InvalidMemoryAddress,
+        InvalidArgument,
         ParseErrorMemoryAddress,
         FileDoesntExist,
         UnableToOpenFile,
@@ -63,6 +64,13 @@ namespace sfall_asm
 
         // Calculate the jump distance for relative jump/call.
         public static int CalculateRelJump32(int from, int to) => SwapEndian(to - from - 5);
+    }
+
+    public static class Extensions
+    {
+        public static string ToHexString(this int i) => "0x" + i.ToString("x");
+        public static string ToHexString(this short i) => "0x" + i.ToString("x");
+        public static string ToHexString(this byte i) => "0x" + i.ToString("x");
     }
 
 }

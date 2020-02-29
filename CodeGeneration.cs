@@ -30,6 +30,15 @@
             };
         }
 
+        public static SSLToken DeclareVariable(string name)
+        {
+            return new SSLToken()
+            {
+                Type = SSLTokenType.VariableDeclaration,
+                Code = $"variable {name}"
+            };
+        }
+
         public static SSLToken Function(string name, string retVariable =null, params string[] args)
         {
             string Code = "";
@@ -65,6 +74,11 @@
     // https://github.com/rotators/Fo1in2/blob/master/Fallout2/Fallout1in2/Mapper/source/scripts/headers/voodoo_lib.h
     class VoodooLib
     {
+        public SSLToken AssertByte(string retVar, string addressName, string address, string expected)
+        {
+            return SSL.Function("VOODOO_AssertByte", retVar, addressName, address, expected);
+        }
+
         public SSLToken BlockCall(int address, int length)
         {
             length = MathUtils.Clamp(length, 5, 15);
@@ -85,6 +99,8 @@
         public SSLToken Write8(string address, string value) => SSL.Function("VOODOO_SafeWrite8", null, address, value);
         public SSLToken Write16(string address, string value) => SSL.Function("VOODOO_SafeWrite16", null, address, value);
         public SSLToken Write32(string address, string value) => SSL.Function("VOODOO_SafeWrite32", null, address, value);
+
+        public SSLToken GetHookFuncOffset(string retVar, string address, string offset) => SSL.Function("VOODOO_GetHookFuncOffset", retVar, address, offset);
     }
 
     class Generators

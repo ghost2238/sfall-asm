@@ -9,7 +9,7 @@ namespace sfall_asm
         public enum RunMode
         {
             Macro,      // Preprocessor macro
-            Procedure,  // Inline procedure
+            Procedure,  // Procedure (inline and normal)
             Memory      // Write the code directly into a running instance of Fallout2.exe
         }
 
@@ -35,6 +35,9 @@ namespace sfall_asm
                 Console.WriteLine("\t--rfall           Force using r_write_*() functions");
                 Console.WriteLine("\t--update-file     Apply changes to given file");
                 Console.WriteLine("\t--malloc          Use dynamically allocated memory in patches where requested");
+                Console.WriteLine();
+                Console.WriteLine("GENERATORS");
+                Console.WriteLine("\t--sfall-assert    Generate a patch to assert that code is correct");
                 Console.WriteLine();
                 Console.WriteLine("PATCH VARIABLES");
                 Console.WriteLine("\t--memory-args     Set memory variables");
@@ -78,6 +81,33 @@ namespace sfall_asm
                     Error.Strict = true;
                 else if (a.StartsWith("--memory-args="))
                     engine.ParseMemoryArgs(a);
+                else if (a.StartsWith("--sfall-assert=")) // --sfall-assert=name,hook_address,bytes
+                {
+                    var assertArgs = a.Replace("--sfall-assert=", "");
+                    var spl = assertArgs.Split(',');
+                    if(spl.Length != 3)
+                    {
+                        Error.Fatal("--sfall-assert must use 3 args.", ErrorCodes.InvalidArgument);
+                    }
+                    var name = spl[0];
+                    int address = -1;
+                    try
+                    {
+                        address = Convert.ToInt32(spl[1], 16);
+                    } catch (Exception)
+                    {
+                        Error.Fatal("Unable to parse assert offset.", ErrorCodes.InvalidMemoryAddress);
+                    }
+                    if (!int.TryParse(spl[2], out int bytes))
+                    {
+                        Error.Fatal("Unable to parse assert bytes.", ErrorCodes.InvalidArgument);
+                    }
+
+                    Asserts.Sfall.Assert(name, address, 0, bytes);
+                    if (readKey)
+                        Console.ReadKey();
+                    Environment.Exit(0);
+                }
                 else if (a.StartsWith("--update-file="))
                 {
                     string filename = a.Replace("--update-file=", "");
@@ -100,7 +130,7 @@ namespace sfall_asm
             engine.Run();
 
             if (readKey)
-                Console.ReadKey();
+                Console.ReadKey();  
         }
     }
 }

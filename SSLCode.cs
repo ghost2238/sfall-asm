@@ -87,6 +87,7 @@ namespace sfall_asm
         public bool Pack = true;
         public bool RFall = false;
 
+        public bool InlineProcedure = true; // Only used if RunMode == Procedure
         protected List<string> Info = new List<string>();
         public List<Line> Lines = new List<Line>();
         protected Line LastLine;
@@ -435,7 +436,7 @@ namespace sfall_asm
             {
                 prefix = new string(' ', 3); // default SFallEditor setting... yeah. i know.
 
-                result.Add($"inline procedure {GetName()}");
+                result.Add((InlineProcedure ? "inline " : "") + $"procedure {GetName()}" + (!InlineProcedure ? "()" : ""));
             }
 
             foreach (var line in Lines)

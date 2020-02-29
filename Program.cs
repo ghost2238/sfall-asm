@@ -103,7 +103,7 @@ namespace sfall_asm
                         Error.Fatal("Unable to parse assert bytes.", ErrorCodes.InvalidArgument);
                     }
 
-                    Asserts.Sfall.Assert(name, address, 0, bytes);
+                    new Asserts.Sfall().Assert(name, address, 0, bytes);
                     if (readKey)
                         Console.ReadKey();
                     Environment.Exit(0);

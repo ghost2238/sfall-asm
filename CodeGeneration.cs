@@ -1,4 +1,6 @@
-﻿namespace sfall_asm.CodeGeneration
+﻿using static sfall_asm.SSLCode;
+
+namespace sfall_asm.CodeGeneration
 {
     public enum SSLTokenType
     {
@@ -42,7 +44,7 @@
         public static SSLToken Function(string name, string retVariable =null, params string[] args)
         {
             string Code = "";
-            if (retVariable != null)
+            if (retVariable != null && retVariable != "==") // == means it's used in an expression. 
                 Code = $"{retVariable} := ";
             Code += name;
             Code += Arguments(args);
@@ -103,8 +105,14 @@
         public SSLToken GetHookFuncOffset(string retVar, string address, string offset) => SSL.Function("VOODOO_GetHookFuncOffset", retVar, address, offset);
     }
 
-    class Generators
+    class Generator
     {
-        public static VoodooLib VoodooLib => new VoodooLib();
+        protected VoodooLib voodoo = new VoodooLib();
+        protected SSLCode code = new SSLCode();
+
+        protected void Add(string code) => this.code.AddCustomCode(code);
+        protected void Begin() => this.code.Lines.Add(new Line(LineType.begin, 0, 0));
+        protected void End() => this.code.Lines.Add(new Line(LineType.end, 0, 0));
+        protected void DeclareVar(string name) => code.Lines.Add(SSL.DeclareVariable(name).ToLine());
     }
 }

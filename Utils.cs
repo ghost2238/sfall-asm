@@ -42,6 +42,8 @@ namespace sfall_asm
         // Time for some guru meditation...
         public static void Fatal(string error, ErrorCodes code)
         {
+            if (System.Diagnostics.Debugger.IsAttached)
+                throw new Exception($"{code.ToString()}: {error}");
             Console.Error.WriteLine($"{GetContext()}{error}");
             Environment.Exit((int)code);
         }
@@ -68,9 +70,9 @@ namespace sfall_asm
 
     public static class Extensions
     {
-        public static string ToHexString(this int i) => "0x" + i.ToString("x");
-        public static string ToHexString(this short i) => "0x" + i.ToString("x");
-        public static string ToHexString(this byte i) => "0x" + i.ToString("x");
+        public static string ToHexString(this int i) => "0x" + i.ToString("x2");
+        public static string ToHexString(this short i) => "0x" + i.ToString("x2");
+        public static string ToHexString(this byte i) => "0x" + i.ToString("x2");
     }
 
 }

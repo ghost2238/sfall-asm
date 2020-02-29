@@ -3,31 +3,29 @@ using static sfall_asm.SSLCode;
 
 namespace sfall_asm.Asserts
 {
-    class Sfall
+    class Sfall : CodeGeneration.Generator
     {
-        public static void Assert(string name, int address, int offset, int bytes)
+        public void Assert(string name, int address, int offset, int bytes)
         {
-            var fallout2 = new Fallout2();
+            var fallout2    = new Fallout2();
             var baseaddress = fallout2.GetHookFuncOffset(address, offset);
-            var memory = fallout2.ReadMemoryAt(baseaddress);
-            var sfallCode = memory.ReadBytes(bytes);
-            var code = new SSLCode();
+            var sfallCode   = fallout2.ReadMemoryAt(baseaddress).ReadBytes(bytes);
+
             code.InlineProcedure = false;
             code.Name = "Assert" + name;
-            var voodoo = new CodeGeneration.VoodooLib();
-            code.Lines.Add(new Line(LineType.begin, 0, 0));
-            code.Lines.Add(CodeGeneration.SSL.DeclareVariable("success").ToLine());
-            code.Lines.Add(CodeGeneration.SSL.DeclareVariable("name").ToLine());
-            code.Lines.Add(CodeGeneration.SSL.DeclareVariable("base").ToLine());
-            code.AddCustomCode($"name := \"sfall::{name}\"");
-            code.Lines.Add(voodoo.GetHookFuncOffset("base", address.ToHexString(), offset.ToHexString()).ToLine());
+
+            Begin();
+            DeclareVar("name");
+            DeclareVar("base");
+            Add($"name := \"sfall::{name}\"");
+            Add(voodoo.GetHookFuncOffset("base", address.ToHexString(), offset.ToHexString()).Code);
             for(var i=0;i<sfallCode.Length;i++)
             {
-                code.Lines.Add(voodoo.AssertByte("success", $"name+\"+{i.ToHexString()}\"", "base+"+i.ToHexString(), sfallCode[i].ToHexString()).ToLine());
-                code.AddCustomCode("if (success == false) then return false");
+                var call = voodoo.AssertByte("==", $"name+\"+{(i + offset).ToHexString()}\"", "base+"+(i + offset).ToHexString(), sfallCode[i].ToHexString());
+                Add($"if ({call.Code} == false) then return false");
             }
-            code.AddCustomCode("return true");
-            code.Lines.Add(new Line(LineType.end, 0, 0));
+            Add("return true");
+            End();
             code.GetBody(Program.RunMode.Procedure).ForEach(x => Console.WriteLine(x));
         }
     }

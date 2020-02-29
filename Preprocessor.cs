@@ -1,3 +1,4 @@
+using sfall_asm.CodeGeneration;
 using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
@@ -17,6 +18,8 @@ namespace sfall_asm
     // Rewrite Call/Jmp instructions (only E8/E9 now) to use VOODOO_MakeJump and VOODOO_MakeCall.
     public class JumpASMRewriter : IASMParser
     {
+        private VoodooLib voodoo = new CodeGeneration.VoodooLib();
+
         bool IASMParser.Process(ByteString bytes, int offset, Patch patch, List<ParseEventInfo> ParseEvents)
         {
             // Duplicates some code from Patch.cs
@@ -27,10 +30,13 @@ namespace sfall_asm
                 if (bytes.PeekChar(2) == '[')
                 {
                     int destination = patch.memoryArgs.ResolveAddress(bytes.RawString, out string resolvedLiteral);
+                    var from = $"0x{offset.ToString("x")}";
+                    var to = $"0x{destination.ToString("x")}";
+                    var code = (isJump ?
+                            voodoo.MakeJump(from, to)
+                          : voodoo.MakeCall(from, to)).Code;
 
-                    var jumpType = isJump ? "Jump" : "Call";
-
-                    patch.ssl.AddCustomCode($"call VOODOO_Make{jumpType}(0x{offset.ToString("x")}, 0x{destination.ToString("x")})");
+                    patch.ssl.AddCustomCode(code);
                     patch.lastOffset = patch.currentOffset + 5;
                     return true;
                 }
@@ -48,6 +54,8 @@ namespace sfall_asm
         private List<ParseEventInfo> ParseEvents;
         private Regex parseMalloc;
         private Regex parseCallArgs;
+        private VoodooLib voodoo = new CodeGeneration.VoodooLib();
+
         public MallocPreProcessor(bool debugCode)
         {
             this.parseCallArgs = new Regex("VOODOO_Make(.+?)\\((.+?),(.+?)\\)");
@@ -124,7 +132,13 @@ namespace sfall_asm
                         var m = this.parseCallArgs.Match(line.Code);
                         var addr = Convert.ToInt32(m.Groups[2].Value, 16);
                         var offset = addr - startAddress;
-                        line.Code = $"call VOODOO_Make{m.Groups[1]}(addr+{offset},{m.Groups[3]})";
+                        var isJump = m.Groups[1].Value == "Jump";
+                        var from = $"addr+{offset}";
+                        var to = m.Groups[3].Value;
+
+                        line.Code = (isJump ?
+                            voodoo.MakeJump(from, to)
+                          : voodoo.MakeCall(from, to)).Code;
                         bytes += 5;
                     }
                 }
@@ -147,35 +161,35 @@ namespace sfall_asm
             }
             if (startIdx != -1)
             {
-                code.Lines.Insert(startIdx, new SSLCode.Line("addr := VOODOO_nmalloc(" + bytes + ")"));
+                code.Lines.Insert(startIdx, voodoo.nmalloc("addr", bytes).ToLine());
                 if (debugCode)
-                    code.Lines.Insert(startIdx+1, new SSLCode.Line($"debug(\"Allocated {bytes} bytes @ \"+ addr)"));
+                    code.Lines.Insert(startIdx+1, CodeGeneration.Rotators.Debug($"\"Allocated {bytes} bytes @ \"+ addr").ToLine());
             }
         }
 
         public SSLCode.Line ConvertWrite(SSLCode code, SSLCode.Line line, int offset)
         {
-            string newCode = "";
-            string func="";
+            line.HexFormat = code.Lower ? "x" : "X";
+            string address = $"addr+{offset}";
+            string value = line.ValueString;
+
+            SSLCode.Line newLine=null;
+
             if (line.Type == SSLCode.LineType.write_byte)
             {
                 bytes += 1;
-                func = "call VOODOO_SafeWrite8 ";
+                newLine = voodoo.Write8(address, value).ToLine();
             }
-            if (line.Type == SSLCode.LineType.write_short)
+            else if (line.Type == SSLCode.LineType.write_short)
             {
                 bytes += 2;
-                func = "call VOODOO_SafeWrite16";
+                newLine = voodoo.Write16(address, value).ToLine();
             }
-            if (line.Type == SSLCode.LineType.write_int)
+            else if (line.Type == SSLCode.LineType.write_int)
             {
                 bytes += 4;
-                func = "call VOODOO_SafeWrite32";
+                newLine = voodoo.Write32(address, value).ToLine();
             }
-            line.HexFormat = code.Lower ? "x" : "X";
-            newCode = $"{func}(addr+{offset}, {line.ValueString})";
-
-            var newLine = new SSLCode.Line(newCode);
             newLine.Comment = line.Comment;
             return newLine;
         }

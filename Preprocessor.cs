@@ -133,7 +133,7 @@ namespace sfall_asm
                         var addr = Convert.ToInt32(m.Groups[2].Value, 16);
                         var offset = addr - startAddress;
                         var isJump = m.Groups[1].Value == "Jump";
-                        var from = $"addr+{offset}";
+                        var from = $"$addr+{offset}";
                         var to = m.Groups[3].Value;
 
                         line.Code = (isJump ?
@@ -161,16 +161,16 @@ namespace sfall_asm
             }
             if (startIdx != -1)
             {
-                code.Lines.Insert(startIdx, voodoo.nmalloc("addr", bytes).ToLine());
+                code.Lines.Insert(startIdx, voodoo.nmalloc("$addr", bytes).ToLine());
                 if (debugCode)
-                    code.Lines.Insert(startIdx+1, CodeGeneration.Rotators.Debug($"\"Allocated {bytes} bytes @ \"+ addr").ToLine());
+                    code.Lines.Insert(startIdx+1, CodeGeneration.Rotators.Debug($"\"Allocated {bytes} bytes @ \"+ $addr").ToLine());
             }
         }
 
         public SSLCode.Line ConvertWrite(SSLCode code, SSLCode.Line line, int offset)
         {
             line.HexFormat = code.Lower ? "x" : "X";
-            string address = $"addr+{offset}";
+            string address = $"$addr+{offset}";
             string value = line.ValueString;
 
             SSLCode.Line newLine=null;

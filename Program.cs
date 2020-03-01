@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
@@ -52,8 +53,8 @@ namespace sfall_asm
 
             bool malloc = false;
             bool readKey = false;
-            var engine = new PatchEngine();
             bool runEngine = true;
+            var engine = new PatchEngine();
 
             foreach (var a in args)
             {

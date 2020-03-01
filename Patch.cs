@@ -360,6 +360,7 @@ namespace sfall_asm
             List<string> defines = new List<string>();
             List<string> code = new List<string>();
 
+            List<string> globalVariables = new List<string>();
             SortedDictionary<int,string> addressDict = new SortedDictionary<int,string>();
             int addressDictMax = 0;
 
@@ -409,8 +410,13 @@ namespace sfall_asm
                 defines.Insert(0, $"#define {define.Value.PadRight(addressDictMax)}  0x{(-define.Key).ToString("x")}");
             }
 
+            var variables = new List<string>();
+            foreach (var var in globalVariables)
+                variables.Add($"variable ${var};");
+
             if(updateFile.IsSet)
             {
+                updateFile.SetTag(nameof(variables), variables);
                 updateFile.SetTag(nameof(defines), defines);
                 updateFile.SetTag(nameof(code), code);
             }
@@ -420,6 +426,7 @@ namespace sfall_asm
                     defines.Add("");
 
                 result.AddRange(defines);
+                result.AddRange(variables);
                 result.AddRange(code);
             }
 

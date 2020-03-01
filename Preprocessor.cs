@@ -18,7 +18,7 @@ namespace sfall_asm
     // Rewrite Call/Jmp instructions (only E8/E9 now) to use VOODOO_MakeJump and VOODOO_MakeCall.
     public class JumpASMRewriter : IASMParser
     {
-        private VoodooLib voodoo = new CodeGeneration.VoodooLib();
+        private VoodooLib voodoo = new VoodooLib();
 
         bool IASMParser.Process(ByteString bytes, int offset, Patch patch, List<ParseEventInfo> ParseEvents)
         {
@@ -30,8 +30,8 @@ namespace sfall_asm
                 if (bytes.PeekChar(2) == '[')
                 {
                     int destination = patch.memoryArgs.ResolveAddress(bytes.RawString, out string resolvedLiteral);
-                    var from = $"0x{offset.ToString("x")}";
-                    var to = $"0x{destination.ToString("x")}";
+                    var from = offset.ToHexString();
+                    var to = destination.ToHexString();
                     var code = (isJump ?
                             voodoo.MakeJump(from, to)
                           : voodoo.MakeCall(from, to)).Code;

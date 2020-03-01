@@ -32,7 +32,6 @@ namespace sfall_asm
                 Console.WriteLine("\t--no-lower        Hex values won't be lowercased");
                 Console.WriteLine("\t--no-macro-guard  Macros won't be guarded with begin/end");
                 Console.WriteLine("\t--no-pack         Force using write_byte() function only");
-                Console.WriteLine("\t--rfall           Force using r_write_*() functions");
                 Console.WriteLine("\t--update-file     Apply changes to given file");
                 Console.WriteLine("\t--malloc          Use dynamically allocated memory in patches where requested");
                 Console.WriteLine();
@@ -54,6 +53,7 @@ namespace sfall_asm
             bool malloc = false;
             bool readKey = false;
             var engine = new PatchEngine();
+            bool runEngine = true;
 
             foreach (var a in args)
             {
@@ -71,8 +71,6 @@ namespace sfall_asm
                     engine.protossl.Lower = false;
                 else if (a == "--no-macro-guard")
                     engine.protossl.MacroGuard = false;
-                else if (a == "--rfall")
-                    engine.protossl.RFall = true;
                 else if (a == "--malloc")
                     malloc = true;
                 else if (a == "-r")
@@ -83,30 +81,8 @@ namespace sfall_asm
                     engine.ParseMemoryArgs(a);
                 else if (a.StartsWith("--sfall-assert=")) // --sfall-assert=name,hook_address,bytes
                 {
-                    var assertArgs = a.Replace("--sfall-assert=", "");
-                    var spl = assertArgs.Split(',');
-                    if(spl.Length != 3)
-                    {
-                        Error.Fatal("--sfall-assert must use 3 args.", ErrorCodes.InvalidArgument);
-                    }
-                    var name = spl[0];
-                    int address = -1;
-                    try
-                    {
-                        address = Convert.ToInt32(spl[1], 16);
-                    } catch (Exception)
-                    {
-                        Error.Fatal("Unable to parse assert offset.", ErrorCodes.InvalidMemoryAddress);
-                    }
-                    if (!int.TryParse(spl[2], out int bytes))
-                    {
-                        Error.Fatal("Unable to parse assert bytes.", ErrorCodes.InvalidArgument);
-                    }
-
-                    new Asserts.Sfall().Assert(name, address, 0, bytes);
-                    if (readKey)
-                        Console.ReadKey();
-                    Environment.Exit(0);
+                    Asserts.Sfall.ParseAndRunAssertArgs(a);
+                    runEngine = false;
                 }
                 else if (a.StartsWith("--update-file="))
                 {
@@ -127,7 +103,8 @@ namespace sfall_asm
                 engine.AddASMParser(new JumpASMRewriter());
                 engine.AddSSLPreProcessor(new MallocPreProcessor(true));
             }
-            engine.Run();
+            if(runEngine)
+                engine.Run();
 
             if (readKey)
                 Console.ReadKey();  

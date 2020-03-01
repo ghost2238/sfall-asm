@@ -31,12 +31,11 @@ namespace sfall_asm
             public string Code;
             public string Comment;
 
-            public bool RFall;
             public bool HRP;
 
             public string HexFormat;
 
-            public string FunctionString => (RFall ? "r_" : "") + Enum.GetName(typeof(LineType), Type);
+            public string FunctionString => Enum.GetName(typeof(LineType), Type);
             public string AddressString => (HRP ? "r_hrp_offset(" : "") + "0x" + Address.ToString(HexFormat) + (HRP ? ")" : "");
             public string ValueString
             {
@@ -66,7 +65,7 @@ namespace sfall_asm
                 Address = 0;
                 Value = 0;
                 Comment = "";
-                RFall = HRP = false;
+                HRP = false;
             }
 
             public Line(LineType type, int address, int value, string comment = "")
@@ -76,7 +75,7 @@ namespace sfall_asm
                 Value = value;
                 Comment = comment;
 
-                RFall = HRP = false;
+                HRP = false;
             }
         };
 
@@ -85,7 +84,6 @@ namespace sfall_asm
         public bool Lower = true;
         public bool MacroGuard = true;
         public bool Pack = true;
-        public bool RFall = false;
 
         public bool InlineProcedure = true; // Only used if RunMode == Procedure
         protected List<string> Info = new List<string>();
@@ -109,7 +107,6 @@ namespace sfall_asm
             Lower = other.Lower;
             MacroGuard = other.MacroGuard;
             Pack = other.Pack;
-            RFall = other.RFall;
 
             /*
             Info = other.Info;
@@ -143,6 +140,10 @@ namespace sfall_asm
             LastSemicolonLine = LastLine;
         }
 
+        // vanilla sfall cannot write outside Fallout2.exe memory currently,
+        // see sfall/Modules/Scripting/Handlers/Memory.cpp -- START_VALID_ADDR, END_VALID_ADDR
+        // https://github.com/phobos2077/sfall/issues/288
+        // we handle this with a few workarounds in Fallout1in2/Mapper/source/scripts/headers/voodoo_lib.h
         public void AddWrite(int size, int address, int value, string comment = "")
         {
             LineType type;
@@ -159,32 +160,26 @@ namespace sfall_asm
             AddLine(new Line(type, address, value, comment));
             LastSemicolonLine = LastLine;
 
-            // vanilla sfall cannot write outside Fallout2.exe memory currently,
-            // after preparing all lines, code is tweaked to use less restricted rfall implementation
-            // see sfall/Modules/Scripting/Handlers/Memory.cpp -- START_VALID_ADDR, END_VALID_ADDR
-            if (address < 0x410000 || address > 0x6B403F)
-                LastLine.RFall = true;
-
             // f2_res.dll base address might change in some conditions
             // make sure macro/procedure is writing at correct position by tweaking address same way as sfall does
             // see sfall/main.cpp -- HRPAddress()
-            if (address >= 0x10000000 && address <= 0x10077000)
-                LastLine.RFall = LastLine.HRP = true;
+            //if (address >= 0x10000000 && address <= 0x10077000)
+            //    LastLine.RFall = LastLine.HRP = true;
 
             // add r_ prefix to ALL lines if at least one write uses rfall function or --rfall is used
             // in first case it's technically not needed to use r_write_* if other address(es) are inside sfall limits,
             // but mixing limited and non-limited writing can make macro/procedure useless and/or dangerous
-            if (!LastLine.RFall && this.RFall)
-                LastLine.RFall = true;
-            else if (LastLine.RFall && !this.RFall)
-            {
-                foreach (Line line in Lines)
-                {
-                    line.RFall = true;
-                }
-
-                this.RFall = true;
-            }
+            //if (!LastLine.RFall && this.RFall)
+            //    LastLine.RFall = true;
+            //else if (LastLine.RFall && !this.RFall)
+            //{
+            //    foreach (Line line in Lines)
+            //    {
+            //        line.RFall = true;
+            //    }
+            //
+            //    this.RFall = true;
+            //}
         }
 
         public void AddComment(string comment)
@@ -319,12 +314,6 @@ namespace sfall_asm
                 {
                     hrp = true;
                     result.Add("// hrp required");
-                }
-
-                if (!rfall && line.RFall)
-                {
-                    rfall = true;
-                    result.Add("// rfall required");
                 }
 
                 if (rfall && hrp)
@@ -462,9 +451,6 @@ namespace sfall_asm
 
                 if (line.Type == LineType.begin || line.Type == LineType.end || line.Type == LineType.noop)
                 {
-                    bool rfall = line.RFall;
-                    line.RFall = false;
-
                     // align begin/end to right when generating procedure
                     if (mode == RunMode.Procedure)
                         resultmp = " ";
@@ -474,8 +460,6 @@ namespace sfall_asm
 
                     if (line.Type == LineType.noop && line != LastLine)
                         resultmp += ";";
-
-                    line.RFall = rfall;
                 }
                 else if (line.TypeIsWrite)
                 {

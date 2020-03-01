@@ -70,9 +70,9 @@ namespace sfall_asm
 
     public static class Extensions
     {
-        public static string ToHexString(this int i) => "0x" + i.ToString("x2");
-        public static string ToHexString(this short i) => "0x" + i.ToString("x2");
-        public static string ToHexString(this byte i) => "0x" + i.ToString("x2");
+        public static string ToHexString(this int i) => "0x" + i.ToString("x");
+        public static string ToHexString(this short i) => "0x" + i.ToString("x");
+        public static string ToHexString(this byte i) => "0x" + i.ToString("x");
     }
 
 }

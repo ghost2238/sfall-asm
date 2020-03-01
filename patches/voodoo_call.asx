@@ -1,0 +1,80 @@
+# https://defuse ca/online-x86-assembler htm
+
+push ebp
+push esi
+push edi
+mov ebp,esp
+sub esp,0xC
+
+mov dword ptr ss:[ebp-0x4],eax # address
+mov dword ptr ss:[ebp-0x8],edx # call_conv
+mov dword ptr ss:[ebp-0xC],ebx # arg_count
+mov esi,ecx                    # arg_buffer
+xor edi,edi                    # arg_current
+
+jmp _check
+
+_loop:
+cmp dword ptr ss:[ebp-0x8],0x0
+je _watcom
+cmp dword ptr ss:[ebp-0x8],0x1
+je _cdecl
+cmp dword ptr ss:[ebp-0x8],0x2
+je _stdcall
+cmp dword ptr ss:[ebp-0x8],0x3
+je _fastcall
+
+_wth:
+jmp _cleanup
+
+_watcom:
+cmp edi,0x0
+jne _watcom_edx
+mov eax,dword ptr ds:[esi]
+jmp _inc
+_watcom_edx:
+cmp edi,0x1
+jne _watcom_ebx
+mov edx,dword ptr ds:[esi]
+jmp _inc
+_watcom_ebx:
+cmp edi,0x2
+jne _watcom_ecx
+mov ebx,dword ptr ds:[esi]
+jmp _inc
+_watcom_ecx:
+cmp edi,0x3
+jne _push
+mov ecx,dword ptr ds:[esi]
+jmp _inc
+
+_cdecl:
+# TODO
+jmp _cleanup
+
+_stdcall:
+# TODO
+jmp _cleanup
+
+_fastcall:
+# TODO
+jmp _cleanup
+
+_push:
+push dword ptr ds:[esi]
+
+_inc:
+inc edi
+add esi,4
+
+_check:
+cmp edi, dword ptr ss:[ebp-0xC]
+jne _loop
+
+_call:
+call dword ptr ss:[ebp-0x4]
+
+_cleanup:
+pop edi
+pop esi
+# ???

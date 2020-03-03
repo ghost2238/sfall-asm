@@ -176,7 +176,7 @@ namespace sfall_asm
             }
             if (startIdx != -1)
             {
-                var codeVar = new MallocVar($"VOODOO_{code.Name}_{currentName}");
+                var codeVar = new MallocVar($"VOODOO_ID_{code.Name}_{currentName}");
 
                 code.Lines.Insert(startIdx, voodoo.nmalloc("$addr", bytes).ToLine());
                 code.Lines.Insert(startIdx + 1, voodoo.SetAddressOf(codeVar.Name, "$addr").ToLine());

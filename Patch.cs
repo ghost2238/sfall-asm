@@ -376,7 +376,6 @@ namespace sfall_asm
             
             List<string> globalVariables = new List<string>();
             SortedDictionary<int,string> addressDict = new SortedDictionary<int,string>();
-            int addressDictMax = 0;
 
             foreach (string patchFile in patchFiles)
             {
@@ -423,7 +422,7 @@ namespace sfall_asm
             foreach (KeyValuePair<int, string> define in addressDict)
                 allDefines.Add(define.Value, $"0x{(-define.Key).ToString("x")}");
 
-            int i = 0;
+            int i = 1;
             foreach (var define in mallocVariables)
                 allDefines.Add(define, (i++).ToString());
 

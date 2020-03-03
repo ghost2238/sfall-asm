@@ -32,7 +32,6 @@ namespace sfall_asm
             public string Comment;
 
             public bool HRP;
-            public bool Malloc;
 
             public string HexFormat;
 

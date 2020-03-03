@@ -32,6 +32,7 @@ namespace sfall_asm
             public string Comment;
 
             public bool HRP;
+            public bool Malloc;
 
             public string HexFormat;
 
@@ -165,21 +166,6 @@ namespace sfall_asm
             // see sfall/main.cpp -- HRPAddress()
             //if (address >= 0x10000000 && address <= 0x10077000)
             //    LastLine.RFall = LastLine.HRP = true;
-
-            // add r_ prefix to ALL lines if at least one write uses rfall function or --rfall is used
-            // in first case it's technically not needed to use r_write_* if other address(es) are inside sfall limits,
-            // but mixing limited and non-limited writing can make macro/procedure useless and/or dangerous
-            //if (!LastLine.RFall && this.RFall)
-            //    LastLine.RFall = true;
-            //else if (LastLine.RFall && !this.RFall)
-            //{
-            //    foreach (Line line in Lines)
-            //    {
-            //        line.RFall = true;
-            //    }
-            //
-            //    this.RFall = true;
-            //}
         }
 
         public void AddComment(string comment)
@@ -494,10 +480,10 @@ namespace sfall_asm
             return result;
         }
 
-        public List<string> Get(RunMode mode, List<ISSLPreProcessor> preProcessors, List<ParseEventInfo> parseEvents)
+        public List<string> Get(Patch patch, RunMode mode, List<ISSLPreProcessor> preProcessors, List<ParseEventInfo> parseEvents)
         {
             PreProcess(mode);
-            preProcessors.ForEach(x => x.Process(this, parseEvents));
+            preProcessors.ForEach(x => x.Process(this, patch, parseEvents));
 
             List<string> result = new List<string>();
 

@@ -41,6 +41,20 @@ namespace sfall_asm.CodeGeneration
             };
         }
 
+        public static SSLToken OP(string name, string retVariable = null, params string[] args)
+        {
+            string Code = "";
+            if (retVariable != null)
+                Code = $"{retVariable} := ";
+            Code += name;
+            Code += Arguments(args);
+            return new SSLToken()
+            {
+                Type = SSLTokenType.FunctionCall,
+                Code = Code
+            };
+        }
+
         public static SSLToken Function(string name, string retVariable =null, params string[] args)
         {
             string Code = "";
@@ -96,11 +110,13 @@ namespace sfall_asm.CodeGeneration
         public SSLToken MakeCall(string address, string func) => SSL.Function("VOODOO_MakeCall", null, address, func);
         public SSLToken MakeCall(string address, int func)    => SSL.Function("VOODOO_MakeCall", null, address, func.ToString());
 
+        public SSLToken SetAddressOf(string var, string value) => SSL.Function("VOODOO_SetAddressOf", null, var, value);
+        public SSLToken GetAddressOf(string retVar, string var) => SSL.Function("VOODOO_GetAddressOf", retVar, var);
 
         // Underlying methods might change.
-        public SSLToken Write8(string address, string value) => SSL.Function("VOODOO_SafeWrite8", null, address, value);
-        public SSLToken Write16(string address, string value) => SSL.Function("VOODOO_SafeWrite16", null, address, value);
-        public SSLToken Write32(string address, string value) => SSL.Function("VOODOO_SafeWrite32", null, address, value);
+        public SSLToken Write8(string address, string value)  => SSL.OP("write_byte", null, address, value);
+        public SSLToken Write16(string address, string value) => SSL.OP("write_short", null, address, value);
+        public SSLToken Write32(string address, string value) => SSL.OP("write_int", null, address, value);
 
         public SSLToken GetHookFuncOffset(string retVar, string address, string offset) => SSL.Function("VOODOO_GetHookFuncOffset", retVar, address, offset);
     }

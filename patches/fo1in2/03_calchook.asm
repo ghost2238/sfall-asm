@@ -1,5 +1,7 @@
 //! NAME CalcHook
 // calculate the destination of a hook/jump + offset
+//! ASM !//
+/// malloc(patch)
 [patch]  | 2E:8B30 | mov esi,cs:[eax]
 00000000 | 01D0    | add eax,edx
 00000000 | 01F0    | add eax,esi

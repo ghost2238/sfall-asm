@@ -7,7 +7,7 @@ namespace sfall_asm
 {
     public interface ISSLPreProcessor
     {
-        void Process(SSLCode code, List<ParseEventInfo> ParseEvents);
+        void Process(SSLCode code, Patch patch, List<ParseEventInfo> ParseEvents);
     }
 
     public interface IASMParser
@@ -43,6 +43,17 @@ namespace sfall_asm
             }
 
             return false;
+        }
+    }
+
+    public class MallocVar
+    {
+        public int Id;
+        public string Name;
+        public MallocVar(string name)
+        {
+            this.Name = name;
+            this.Id = PatchEngine.Get().DeclareMallocVar(name);
         }
     }
 
@@ -90,7 +101,7 @@ namespace sfall_asm
             return null;
         }
 
-        public void Process(SSLCode code, List<ParseEventInfo> ParseEvents)
+        public void Process(SSLCode code, Patch patch, List<ParseEventInfo> ParseEvents)
         {
             this.ParseEvents = ParseEvents;
             bytes = 0;
@@ -114,8 +125,12 @@ namespace sfall_asm
                 if (line.Type == SSLCode.LineType.comment && this.parseMalloc.IsMatch(line.Comment))
                 {
                     var m = this.parseMalloc.Match(line.Comment);
-                    if(m.Success)
+                    if (m.Success)
+                    {
                         mallocVars.Add(m.Groups[1].Value);
+                        code.Lines.Remove(line);
+                        i--;
+                    }
                 }
 
                 if (currentName == "")
@@ -161,10 +176,16 @@ namespace sfall_asm
             }
             if (startIdx != -1)
             {
+                var codeVar = new MallocVar($"VOODOO_{code.Name}_{currentName}");
+
                 code.Lines.Insert(startIdx, voodoo.nmalloc("$addr", bytes).ToLine());
+                code.Lines.Insert(startIdx + 1, voodoo.SetAddressOf(codeVar.Name, "$addr").ToLine());
                 if (debugCode)
-                    code.Lines.Insert(startIdx+1, CodeGeneration.Rotators.Debug($"\"Allocated {bytes} bytes @ \"+ $addr").ToLine());
+                    code.Lines.Insert(startIdx+2, Rotators.Debug($"\"Allocated {bytes} bytes @ 0x\"+ sprintf(\"%x\", $addr)").ToLine());
             }
+
+            // TODO: Format code...
+
         }
 
         public SSLCode.Line ConvertWrite(SSLCode code, SSLCode.Line line, int offset)

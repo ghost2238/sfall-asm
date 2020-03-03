@@ -295,11 +295,14 @@ namespace sfall_asm
 
     class PatchEngine
     {
+        static PatchEngine singleton;
+
         private List<IASMParser> ASMParsers = new List<IASMParser>();
         private List<ISSLPreProcessor> SSLPreProcessor = new List<ISSLPreProcessor>();
         private List<string> patchFiles = new List<string>();
         private List<ParseEventInfo> parseEvents = new List<ParseEventInfo>();
         private MemoryArgs memoryArgs = new MemoryArgs();
+        public List<string> mallocVariables = new List<string>();
         public RunMode runMode;
         public SSLCode protossl;
         public UpdateFile updateFile;
@@ -312,7 +315,17 @@ namespace sfall_asm
             protossl = new SSLCode("VOODOO");
             updateFile = new UpdateFile(new Regex(@"^[\t ]*/[/]+[\t ]+sfall-asm:([A-Za-z0-9_]+)-(begin|end)[\t ]+/[/]+[\t ]*$"), "begin", "end");
 
+            singleton = this;
+
             Error.GetErrorContext = () => GetErrorContext();
+        }
+
+        public static PatchEngine Get() => singleton;
+
+        public int DeclareMallocVar(string name)
+        {
+            mallocVariables.Add(name);
+            return mallocVariables.Count - 1;
         }
 
         public string FileAndLine => $"{currentFilename}:{currentLine}";
@@ -360,6 +373,7 @@ namespace sfall_asm
             List<string> defines = new List<string>();
             List<string> code = new List<string>();
 
+            
             List<string> globalVariables = new List<string>();
             SortedDictionary<int,string> addressDict = new SortedDictionary<int,string>();
             int addressDictMax = 0;
@@ -395,7 +409,7 @@ namespace sfall_asm
                         string defineName = $"{ssl.GetName()}__{memoryArgName}";
 
                         addressDict[-memoryArgs[memoryArgName]] = defineName; // store as negative for cheap reversed order
-                        addressDictMax = Math.Max(addressDictMax, defineName.Length);
+                       // addressDictMax = Math.Max(addressDictMax, defineName.Length);
 
                         memoryArgs[memoryArgName] = group.Value;
                     }
@@ -405,10 +419,17 @@ namespace sfall_asm
                     code.Add("");
             }
 
-            foreach(KeyValuePair<int,string> define in addressDict)
-            {
-                defines.Insert(0, $"#define {define.Value.PadRight(addressDictMax)}  0x{(-define.Key).ToString("x")}");
-            }
+            var allDefines = new Dictionary<string, string>();
+            foreach (KeyValuePair<int, string> define in addressDict)
+                allDefines.Add(define.Value, $"0x{(-define.Key).ToString("x")}");
+
+            int i = 0;
+            foreach (var define in mallocVariables)
+                allDefines.Add(define, (i++).ToString());
+
+            var defineLength = allDefines.Max(x => x.Key.Length);
+            foreach(var define in allDefines)
+                defines.Add($"#define {define.Key.PadRight(defineLength)}  {define.Value}");
 
             var variables = new List<string>();
             foreach (var var in globalVariables)
@@ -650,7 +671,7 @@ namespace sfall_asm
             }
             else
             {
-                result.AddRange(ssl.Get(runMode, preProcessors, this.parseEvents));
+                result.AddRange(ssl.Get(this, runMode, preProcessors, this.parseEvents));
             }
 
             return result;

@@ -41,8 +41,10 @@ namespace sfall_asm
 
         public MemoryReader ReadMemoryAt(int address)
         {
-            var reader = new MemoryReader(this.memory);
-            reader.offset = address;
+            var reader = new MemoryReader(this.memory)
+            {
+                offset = address
+            };
             return reader;
         }
 
@@ -124,8 +126,7 @@ namespace sfall_asm
                 return st;
             }
 
-            int end;
-            string s = mem.ReadString(offset, out end);
+            string s = mem.ReadString(offset, out int end);
             this.offset = end;
             return s;
         }
@@ -133,7 +134,6 @@ namespace sfall_asm
 
     public class Memory
     {
-        const int PROCESS_VM_OPERATION = 0x08;
         const int PROCESS_VM_READ = 0x10;
         const int PROCESS_VM_WRITE = 0x20;
 

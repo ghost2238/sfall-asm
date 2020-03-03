@@ -13,6 +13,7 @@ namespace sfall_asm
         FileDoesntExist,
         UnableToOpenFile,
         InvalidUpdateFile,
+        MallocRequired,
         UnableToFindFallout2,
         UnhandledException
     }

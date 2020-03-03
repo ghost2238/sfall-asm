@@ -73,7 +73,7 @@ namespace sfall_asm
                 else if (a == "--no-macro-guard")
                     engine.protossl.MacroGuard = false;
                 else if (a == "--malloc")
-                    malloc = true;
+                    engine.protossl.Malloc = true;
                 else if (a == "-r")
                     readKey = true;
                 else if (a == "-strict")
@@ -99,11 +99,7 @@ namespace sfall_asm
                         engine.AddPatch(a);
                 }
             }
-            if (malloc)
-            {
-                engine.AddASMParser(new JumpASMRewriter());
-                engine.AddSSLPreProcessor(new MallocPreProcessor(true));
-            }
+
             if(runEngine)
                 engine.Run();
 

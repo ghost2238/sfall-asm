@@ -32,16 +32,29 @@ namespace sfall_asm
             public string Comment;
 
             public bool HRP;
+            public bool Malloc;
 
             public string HexFormat;
 
             public string FunctionString => Enum.GetName(typeof(LineType), Type);
-            public string AddressString => (HRP ? "r_hrp_offset(" : "") + "0x" + Address.ToString(HexFormat) + (HRP ? ")" : "");
+            public string AddressString
+            {
+                get
+                {
+                    // Address = offset from 0 with Malloc
+                    if (Malloc)
+                        return "$addr" + (Address == 0 ? "" : "+"+Address.ToString()); 
+                    return (HRP ? "r_hrp_offset(" : "") + "0x" + Address.ToString(HexFormat) + (HRP ? ")" : "");
+                }
+            }
+            
+
             public string ValueString
             {
                 get
                 {
                     string result = "";
+
 
                     if (Type == LineType.write_byte)
                         result = ((byte)Value).ToString($"{HexFormat}2");
@@ -84,6 +97,7 @@ namespace sfall_asm
         public bool Lower = true;
         public bool MacroGuard = true;
         public bool Pack = true;
+        public bool Malloc = false;
 
         public bool InlineProcedure = true; // Only used if RunMode == Procedure
         protected List<string> Info = new List<string>();
@@ -107,6 +121,7 @@ namespace sfall_asm
             Lower = other.Lower;
             MacroGuard = other.MacroGuard;
             Pack = other.Pack;
+            Malloc = other.Malloc;
 
             /*
             Info = other.Info;
@@ -144,7 +159,7 @@ namespace sfall_asm
         // see sfall/Modules/Scripting/Handlers/Memory.cpp -- START_VALID_ADDR, END_VALID_ADDR
         // https://github.com/phobos2077/sfall/issues/288
         // we handle this with a few workarounds in Fallout1in2/Mapper/source/scripts/headers/voodoo_lib.h
-        public void AddWrite(int size, int address, int value, string comment = "")
+        public void AddWrite(int size, int address, int value, string comment = "", bool malloc=false)
         {
             LineType type;
 
@@ -157,7 +172,10 @@ namespace sfall_asm
             else
                 throw new ArgumentOutOfRangeException(nameof(size));
 
-            AddLine(new Line(type, address, value, comment));
+            var line = new Line(type, address, value, comment);
+            line.Malloc = malloc;
+
+            AddLine(line);
             LastSemicolonLine = LastLine;
 
             // f2_res.dll base address might change in some conditions
@@ -357,7 +375,7 @@ namespace sfall_asm
 
             // collect maximum length of each subelement
             int maxFunctionLength = 0, maxAddressLength = 0, maxValueLength = 0, maxCommentLength = 0;
-            int maxRawWriteMacroLength, maxRawWriteProcedureLength = 0, maxRawCommentLength = 0;
+            int maxRawWriteMacroLength, maxRawCommentLength = 0;
             int maxRawCodeLength = 0, maxRawLength = 0;
 
             foreach (Line line in Lines)
@@ -384,14 +402,14 @@ namespace sfall_asm
             //                       write               (   0x1207             ,   _   0x1337           )   ;   _   /   *   _   text               _   *   /
             maxRawWriteMacroLength = maxFunctionLength + 1 + maxAddressLength + 1 + 1 + maxValueLength + 1 + 1 + 1 + 1 + 1 + 1 + maxCommentLength + 1 + 1 + 1;
             //                           write               (   0x1207             ,   _   0x1337           )   ;   _   /   /   _   text
-            maxRawWriteProcedureLength = maxFunctionLength + 1 + maxAddressLength + 1 + 1 + maxValueLength + 1 + 1 + 1 + 1 + 1 + 1 + maxCommentLength;
+            int maxRawWriteProcedureLength = maxFunctionLength + 1 + maxAddressLength + 1 + 1 + maxValueLength + 1 + 1 + 1 + 1 + 1 + 1 + maxCommentLength;
             //                    /   *   _   text                 _   *   /
             maxRawCommentLength = 1 + 1 + 1 + maxRawCommentLength + 1 + 1 + 1;
 
             if (mode == RunMode.Macro)
             {
                 maxRawLength = Math.Max(maxRawWriteMacroLength, maxRawCommentLength);
-                maxRawLength = Math.Max(maxRawLength, maxRawCodeLength + 1);
+                maxRawLength = Math.Max(maxRawLength, maxRawCodeLength + 3);
             }
             else if (mode == RunMode.Procedure)
             {
@@ -479,10 +497,9 @@ namespace sfall_asm
             return result;
         }
 
-        public List<string> Get(Patch patch, RunMode mode, List<ISSLPreProcessor> preProcessors, List<ParseEventInfo> parseEvents)
+        public List<string> Get(Patch patch, RunMode mode, List<ParseEventInfo> parseEvents)
         {
             PreProcess(mode);
-            preProcessors.ForEach(x => x.Process(this, patch, parseEvents));
 
             List<string> result = new List<string>();
 

@@ -1,3 +1,4 @@
+using sfall_asm.CodeGeneration;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -11,7 +12,6 @@ namespace sfall_asm
     {
         ASM,  // Assembler byte code.
         SSL,  // Fallout 2 script code.
-        Macro // sfall-asm macros.
     }
 
     public enum ParseEvent
@@ -142,6 +142,12 @@ namespace sfall_asm
                 return '\0';
             return str[offset + pos];
         }
+
+        public string PeekChars(int pos, int num)
+        {
+            return str.Substring(offset+pos, num);
+        }
+
         public string ReadChars(int num)
         {
             var read = str.Substring(offset, num);
@@ -154,12 +160,18 @@ namespace sfall_asm
             offset += 2;
             return b;
         }
-        public byte PeekByte()
+
+        public int PeekInt(int pos = 0)
+        {
+            return ASM.SwapEndian(Convert.ToInt32(PeekChars(pos, 4 * 2), 16));
+        }
+
+        public byte PeekByte(int pos=0)
         {
             if (EOF)
                 return 0;
 
-            return Convert.ToByte($"{PeekChar(0)}{PeekChar(1)}", 16);
+            return Convert.ToByte($"{PeekChar(pos)}{PeekChar(pos+1)}", 16);
         }
         public bool HasBytesLeft(int numBytes) => offset + numBytes * 2 <= str.Length;
         public int AsInt(int numBytes)
@@ -176,10 +188,11 @@ namespace sfall_asm
                 throw new Exception("Can't read more than 4 bytes.");
         }
 
-        public void ResolveMemoryArg(MemoryArgs args, int currentOffset)
+        public void ResolveMemoryArg(MemoryArgs args, int currentOffset, out string literal)
         {
             int addr = args.ResolveAddress(str.Substring(offset + 1), out string resolvedLiteral);
             int jumpBytes = ASM.CalculateRelJump32(currentOffset, addr);
+            literal = resolvedLiteral;
             var litBrackets = $"[{resolvedLiteral}]";
             var jumpBytesStr = jumpBytes.ToString("x");
             // https://github.com/ghost2238/sfall-asm/issues/3#issuecomment-588108479
@@ -297,8 +310,6 @@ namespace sfall_asm
     {
         static PatchEngine singleton;
 
-        private List<IASMParser> ASMParsers = new List<IASMParser>();
-        private List<ISSLPreProcessor> SSLPreProcessor = new List<ISSLPreProcessor>();
         private List<string> patchFiles = new List<string>();
         private List<ParseEventInfo> parseEvents = new List<ParseEventInfo>();
         private MemoryArgs memoryArgs = new MemoryArgs();
@@ -335,8 +346,6 @@ namespace sfall_asm
         }
 
         public void AddPatch(string patchFile) => patchFiles.Add(patchFile);
-        public void AddSSLPreProcessor(ISSLPreProcessor processor) => SSLPreProcessor.Add(processor);
-        public void AddASMParser(IASMParser parser) => ASMParsers.Add(parser);
         public bool MultiPatch => patchFiles.Count > 1;
 
         public void ParseMemoryArgs(string arg)
@@ -388,8 +397,8 @@ namespace sfall_asm
 
                 try
                 {
-                    var patch = new Patch(lines, runMode, ssl, memoryArgs, (line) => this.currentLine = line, this.ASMParsers);
-                    code.AddRange(patch.Run(SSLPreProcessor));
+                    var patch = new Patch(lines, runMode, ssl, memoryArgs, (line) => this.currentLine = line);
+                    code.AddRange(patch.Run());
                     this.parseEvents.AddRange(patch.parseEvents);
                 }
                 catch(Exception ex)
@@ -424,11 +433,15 @@ namespace sfall_asm
 
             int i = 1;
             foreach (var define in mallocVariables)
-                allDefines.Add(define, (i++).ToString());
+                allDefines.Add("VOODOO_ID_"+define, (i++).ToString());
 
-            var defineLength = allDefines.Max(x => x.Key.Length);
-            foreach(var define in allDefines)
-                defines.Add($"#define {define.Key.PadRight(defineLength)}  {define.Value}");
+            var defineLength = 0;
+            if (allDefines.Any())
+            {
+                defineLength = allDefines?.Max(x => x.Key.Length) ?? 0;
+                foreach (var define in allDefines)
+                    defines.Add($"#define {define.Key.PadRight(defineLength)}  {define.Value}");
+            }
 
             var variables = new List<string>();
             foreach (var var in globalVariables)
@@ -463,22 +476,40 @@ namespace sfall_asm
         private RunMode runMode;
         private List<MemoryPatch> memoryBytes;
         private Action<int> lineReporter;
-        private List<IASMParser> ASMParsers;
         public int currentOffset;
         public int lastOffset;
         public SSLCode ssl;
         public MemoryArgs memoryArgs;
         public List<ParseEventInfo> parseEvents = new List<ParseEventInfo>();
 
-        public Patch(List<string> lines, RunMode runMode, SSLCode ssl, MemoryArgs memoryArgs, Action<int> lineReporter, List<IASMParser> asmParsers)
+        private int bodyIndex = 0;
+
+        private bool mallocMode = false;
+        private int mallocBytes = 0;
+        private int mallocHead = -1;
+        private string currentMallocVar = "";
+
+        private VoodooLib voodoo = new VoodooLib();
+
+        public Patch(List<string> lines, RunMode runMode, SSLCode ssl, MemoryArgs memoryArgs, Action<int> lineReporter)
         {
             this.lines = lines;
             this.runMode = runMode;
             this.ssl = ssl;
             this.memoryArgs = memoryArgs;
             this.lineReporter = lineReporter;
-            this.ASMParsers = asmParsers;
             this.Parse();
+        }
+
+        private void MallocEnds()
+        {
+            var mallocVar = new MallocVar(ssl.Name+"_"+currentMallocVar);
+
+            ssl.Lines.Insert(mallocHead, voodoo.nmalloc("$addr", mallocBytes).ToLine());
+            ssl.Lines.Insert(mallocHead+1, voodoo.memset("$addr", 0x90, mallocBytes).ToLine());
+            ssl.Lines.Insert(mallocHead+2, voodoo.SetLookupData(mallocVar, "$addr", mallocBytes).ToLine());
+            bodyIndex += 3;
+            mallocMode = false;
         }
 
         public void Parse()
@@ -490,8 +521,12 @@ namespace sfall_asm
             var reInfo = new Regex(@"^///[\t ]+(.+)$");
             var reAddr = new Regex(@"^[\t ]*(|\$[\+\-][A-Fa-f0-9]+[\t ]+|\$[\t ]+[=]+>[\t ]+)([A-Fa-f0-9]+)");
 
+            var reMallocVar = new Regex(@"\[\[([A-Za-z0-9]+)\]\]");
+
             // Changes "///" behavior to include comment inside macro/procedure body
             bool bodyStart = false;
+            // Current line in body
+            bodyIndex = 0;
 
             Match match;
             ParseMode mode = ParseMode.ASM;
@@ -513,11 +548,6 @@ namespace sfall_asm
                         mode = ParseMode.SSL;
                         bodyStart = true;
                     }
-                    else if (var == "MACRO")
-                    {
-                        mode = ParseMode.Macro;
-                        bodyStart = true;
-                    }
                     else if (var == "ASM")
                     {
                         mode = ParseMode.ASM;
@@ -534,7 +564,10 @@ namespace sfall_asm
                     if (!bodyStart)
                         ssl.AddInfo(match.Groups[1].Value.Trim());
                     else
+                    {
                         ssl.AddComment(match.Groups[1].Value.Trim());
+                        bodyIndex++;
+                    }
 
                     continue;
                 }
@@ -542,6 +575,12 @@ namespace sfall_asm
                 // A comment for the reader of the .asm file.
                 if (line.Length >= 2 && line[0] == '/' && line[1] == '/')
                     continue;
+
+                if(line == "" && mallocMode == true)
+                {
+                    MallocEnds();
+                    continue;
+                }
 
                 if (mode == ParseMode.ASM)
                 {
@@ -575,6 +614,23 @@ namespace sfall_asm
                                 }
                             });
                         }
+                        // Or a malloc variable [[var]]
+                        var m = reMallocVar.Match(spl[0]);
+                        if (m.Success)
+                        {
+                            if (!ssl.Malloc)
+                                Error.Fatal("Malloc needs to be enabled for this patch.", ErrorCodes.MallocRequired);
+
+                            if(mallocMode)
+                                MallocEnds();
+
+                            spl[0] = "0";
+                            currentMallocVar =  m.Groups[1].Value;
+                            mallocMode = true;
+                            mallocHead = bodyIndex;
+                            mallocBytes = 0;
+                        }
+                        
                     }
 
                     if (spl[0].Length == 0)
@@ -584,6 +640,12 @@ namespace sfall_asm
                     bodyStart = true;
 
                     currentOffset = Convert.ToInt32(spl[0].Trim(), 16);
+
+                    // We encountered a new line with an address that doesn't use zero addressing while stile in active malloc mode
+                    // This means that another writegroup started.
+                    if(mallocMode && mallocBytes > 0 && currentOffset != 0)
+                        MallocEnds();
+
                     if (currentOffset == 0)
                         currentOffset = lastOffset;
 
@@ -591,24 +653,41 @@ namespace sfall_asm
                     bool opLine = true;
                     while (!bytes.EOF)
                     {
-                        bool parserHandled = false;
-                        foreach(var asmParser in this.ASMParsers)
-                        {
-                            parserHandled = asmParser.Process(bytes, currentOffset, this, parseEvents);
-                            if (parserHandled)
-                                break;
-                        }
-                        if (parserHandled)
-                            break;
-
                         // Instructions which supports using absolute->rel addressing or memory variable.
                         // https://github.com/ghost2238/sfall-asm/issues/3
                         // This only works for 32-bit, if we are in 16-bit mode it won't work.
                         // But since we don't care about that at the moment it should be fine.
                         if ((bytes.PeekByte() == 0xE9) || (bytes.PeekByte() == 0xE8))
                         {
+                            string mallocAddr = "";
+
                             if (bytes.PeekChar(2) == '[')
-                                bytes.ResolveMemoryArg(memoryArgs, currentOffset);
+                            {
+                                bytes.ResolveMemoryArg(memoryArgs, currentOffset, out string resolvedLiteral);
+                                mallocAddr = resolvedLiteral;
+                            }
+
+                            var isJump = (bytes.PeekByte() == 0xE9);
+                            var isCall = (bytes.PeekByte() == 0xE8);
+
+                            if (mallocMode)
+                            {
+                                mallocAddr = mallocAddr.StartsWith("0x") ? mallocAddr : "0x"+memoryArgs[mallocAddr].ToString("x");
+
+                                var from = "$addr+"+ currentOffset;
+                                var to = mallocAddr;
+                                var code = (isJump ?
+                                        voodoo.MakeJump(from, to)
+                                      : voodoo.MakeCall(from, to)).Code;
+
+                                ssl.AddCustomCode(code);
+                                mallocBytes += 5;
+                                currentOffset+= 5;
+                                lastOffset = currentOffset;
+                                bytes.ReadChars(2*5);
+                                bodyIndex++;
+                                continue;
+                            }
                         }
 
                         if (runMode == RunMode.Memory)
@@ -629,10 +708,13 @@ namespace sfall_asm
                             else
                                 writeSize = 1;
 
-                            ssl.AddWrite(writeSize, currentOffset, bytes.AsInt(writeSize), opLine ? spl[2].Trim() : "");
+                            ssl.AddWrite(writeSize, currentOffset, bytes.AsInt(writeSize), opLine ? spl[2].Trim() : "", mallocMode);
                             // this is to decide if comment should be written or not.
                             opLine = false;
                             currentOffset += writeSize - 1;
+                            if (mallocMode)
+                                mallocBytes += writeSize;
+                            bodyIndex++;
                         }
 
                         currentOffset++;
@@ -658,9 +740,12 @@ namespace sfall_asm
                     ssl.AddCustomCode(line);
                 }
             }
+
+            if (mallocMode)
+                MallocEnds();
         }
 
-        public List<string> Run(List<ISSLPreProcessor> preProcessors)
+        public List<string> Run()
         {
             List<string> result = new List<string>();
 
@@ -670,7 +755,7 @@ namespace sfall_asm
             }
             else
             {
-                result.AddRange(ssl.Get(this, runMode, preProcessors, this.parseEvents));
+                result.AddRange(ssl.Get(this, runMode, this.parseEvents));
             }
 
             return result;

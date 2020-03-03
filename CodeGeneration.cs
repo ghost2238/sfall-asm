@@ -6,7 +6,8 @@ namespace sfall_asm.CodeGeneration
     {
         VariableDeclaration,
         FunctionCall,
-        MacroUse
+        MacroUse,
+        Comment
     }
 
     public class SSLToken
@@ -14,6 +15,17 @@ namespace sfall_asm.CodeGeneration
         public SSLTokenType Type;
         public string Code;
         public SSLCode.Line ToLine() => new SSLCode.Line(Code);
+    }
+
+    public class MallocVar
+    {
+        public int Id;
+        public string Name;
+        public MallocVar(string name)
+        {
+            this.Name = "VOODOO_ID_"+name;
+            this.Id = PatchEngine.Get().DeclareMallocVar(name);
+        }
     }
 
     public static class SSL
@@ -104,13 +116,14 @@ namespace sfall_asm.CodeGeneration
 
         public SSLToken nmalloc(string retVal, int bytes)
             => SSL.Function("VOODOO_nmalloc", retVal, bytes.ToString());
+        public SSLToken memset(string address, int val, int size) => SSL.Function("VOODOO_memset", null, address, "0x" + val.ToString("x"), size.ToString());
 
         public SSLToken MakeJump(string address, string func) => SSL.Function("VOODOO_MakeJump", null, address, func);
-        public SSLToken MakeJump(string address, int func)    => SSL.Function("VOODOO_MakeJump", null, address, func.ToString());
+        public SSLToken MakeJump(string address, int func)    => SSL.Function("VOODOO_MakeJump", null, address, "0x" + func.ToString("x"));
         public SSLToken MakeCall(string address, string func) => SSL.Function("VOODOO_MakeCall", null, address, func);
-        public SSLToken MakeCall(string address, int func)    => SSL.Function("VOODOO_MakeCall", null, address, func.ToString());
+        public SSLToken MakeCall(string address, int func)    => SSL.Function("VOODOO_MakeCall", null, address, "0x"+func.ToString("x"));
 
-        public SSLToken SetAddressOf(string var, string value) => SSL.Function("VOODOO_SetAddressOf", null, var, value);
+        public SSLToken SetLookupData(MallocVar var, string value, int size) => SSL.Function("VOODOO_SetLookupData", null, var.Name, value, size.ToString());
         public SSLToken GetAddressOf(string retVar, string var) => SSL.Function("VOODOO_GetAddressOf", retVar, var);
 
         // Underlying methods might change.

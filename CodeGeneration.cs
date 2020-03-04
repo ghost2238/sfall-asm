@@ -1,4 +1,5 @@
-﻿using static sfall_asm.SSLCode;
+﻿using System.Collections.Generic;
+using static sfall_asm.SSLCode;
 
 namespace sfall_asm.CodeGeneration
 {
@@ -117,6 +118,16 @@ namespace sfall_asm.CodeGeneration
         public SSLToken nmalloc(string retVal, int bytes)
             => SSL.Function("VOODOO_nmalloc", retVal, bytes.ToString());
         public SSLToken memset(string address, int val, int size) => SSL.Function("VOODOO_memset", null, address, "0x" + val.ToString("x"), size.ToString());
+
+        public SSLToken Alloc(string retVal, string id, int bytes, int clear = -1) {
+            var args = new List<string>();
+            args.Add(id);
+            args.Add(bytes.ToString());
+            if (clear != -1)
+                args.Add(clear.ToString());
+
+            return SSL.Function("VOODOO_Alloc", retVal, args.ToArray());
+        }
 
         public SSLToken MakeJump(string address, string func) => SSL.Function("VOODOO_MakeJump", null, address, func);
         public SSLToken MakeJump(string address, int func)    => SSL.Function("VOODOO_MakeJump", null, address, "0x" + func.ToString("x"));

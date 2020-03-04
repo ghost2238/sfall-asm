@@ -505,10 +505,8 @@ namespace sfall_asm
         {
             var mallocVar = new MallocVar(ssl.Name+"_"+currentMallocVar);
 
-            ssl.Lines.Insert(mallocHead, voodoo.nmalloc("$addr", mallocBytes).ToLine());
-            ssl.Lines.Insert(mallocHead+1, voodoo.memset("$addr", 0x90, mallocBytes).ToLine());
-            ssl.Lines.Insert(mallocHead+2, voodoo.SetLookupData(mallocVar, "$addr", mallocBytes).ToLine());
-            bodyIndex += 3;
+            ssl.Lines.Insert(mallocHead, voodoo.Alloc("$addr", mallocVar.Name, mallocBytes).ToLine());
+            bodyIndex++;
             mallocMode = false;
         }
 

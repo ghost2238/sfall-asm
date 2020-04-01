@@ -1,13 +1,7 @@
 .vs
 bin
 obj
-sfall-asm.csproj.user
 
-# https://dist.nuget.org/win-x86-commandline/latest/nuget.exe
-# nuget.exe install Microsoft.Net.Compilers -ExcludeVersion
-# Microsoft.Net.Compilers\tools\csc.exe -preferreduilang:en -debug:embedded -out:sfall-asm.exe Program.cs
-nuget.exe
-Microsoft.Net.Compilers/
-compile.sh
+sfall-asm.csproj.user
 sfall-asm.exe
 sfall-asm.pdb

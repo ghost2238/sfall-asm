@@ -371,7 +371,8 @@ namespace sfall_asm
             List<string> result = new List<string>();
             string resultmp;
 
-            int bodyCount = 0;
+            int ASMLineCount = 0;
+            int SSLLineCount = 0;
 
             // collect maximum length of each subelement
             int maxFunctionLength = 0, maxAddressLength = 0, maxValueLength = 0, maxCommentLength = 0;
@@ -382,7 +383,7 @@ namespace sfall_asm
             {
                 if (line.TypeIsWrite)
                 {
-                    bodyCount++;
+                    ASMLineCount++;
                     line.HexFormat = Lower ? "x" : "X";
 
                     maxFunctionLength = Math.Max(maxFunctionLength, line.FunctionString.Length);
@@ -392,6 +393,7 @@ namespace sfall_asm
                 }
                 else if (line.Type == LineType.code)
                 {
+                    SSLLineCount++;
                     maxRawCodeLength = Math.Max(maxRawCodeLength, line.Code.Length);
                 }
                 else if (line.Type == LineType.comment)
@@ -431,6 +433,10 @@ namespace sfall_asm
                 result.Add((InlineProcedure ? "inline " : "") + $"procedure {GetName()}" + (!InlineProcedure ? "()" : ""));
             }
 
+            var isOnlyASingleSSLOrASMLine = 
+                (ASMLineCount == 1 && SSLLineCount == 0) || 
+                (SSLLineCount == 1 && ASMLineCount == 0);
+
             foreach (var line in Lines)
             {
                 resultmp = prefix;
@@ -443,7 +449,7 @@ namespace sfall_asm
                     {
                         if (!MacroGuard && line == LastSemicolonLine)
                             semicolon_result = " ";
-                        else if (bodyCount == 1)
+                        else if (isOnlyASingleSSLOrASMLine)
                             semicolon_result = " ";
                     }
 

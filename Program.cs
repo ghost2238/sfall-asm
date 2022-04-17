@@ -51,7 +51,6 @@ namespace sfall_asm
                 return;
             }
 
-            bool malloc = false;
             bool readKey = false;
             bool runEngine = true;
             var engine = new PatchEngine();

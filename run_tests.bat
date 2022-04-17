@@ -1,0 +1,1 @@
+bin\Debug\sfall-asm.exe patches\\tests --malloc -r

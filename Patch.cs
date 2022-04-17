@@ -736,6 +736,7 @@ namespace sfall_asm
                         line = line.Replace($"[{literal}]", "0x" + value.ToString("x"));
                     } while (idx != -1);
                     ssl.AddCustomCode(line);
+                    bodyIndex++;
                 }
             }
 

@@ -46,7 +46,7 @@ namespace sfall_asm
                 Console.WriteLine("\t-r                Console.ReadKey() on exit");
                 Console.WriteLine();
                 Console.WriteLine("ERROR HANDLING");
-                Console.WriteLine("\t-strict           Use strict error handling");
+                Console.WriteLine("\t--strict          Use strict error handling");
 
                 return;
             }
@@ -75,7 +75,7 @@ namespace sfall_asm
                     engine.protossl.Malloc = true;
                 else if (a == "-r")
                     readKey = true;
-                else if (a == "-strict")
+                else if (a == "-strict" || a == "--strict") // -strict left for old/forgotten scripts, "for now"
                     Error.Strict = true;
                 else if (a.StartsWith("--memory-args="))
                     engine.ParseMemoryArgs(a);
